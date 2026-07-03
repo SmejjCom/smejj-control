@@ -1,0 +1,59 @@
+# smejj.com — baut das Control-Server-Image aus dem hochgeladenen Build-Kontext
+# und pusht es nach ghcr.io. Nutzt AUSSCHLIESSLICH den automatischen GITHUB_TOKEN
+# (wird von GitHub Actions selbst bereitgestellt — niemand tippt oder kopiert Tokens).
+# Kosten: GitHub Actions ist fuer dieses Repo im Free-Rahmen (Free-only-Policy).
+name: build-control-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "smejj-control-context.tar.gz"
+      - ".github/workflows/build-control-image.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/smejjcom/smejj-control
+    steps:
+      - name: Quellen holen
+        uses: actions/checkout@v4
+
+      - name: Build-Kontext entpacken
+        run: |
+          mkdir -p build
+          tar -xzf smejj-control-context.tar.gz -C build
+          test -f build/deploy/control-server/Dockerfile
+
+      - name: Bei ghcr.io anmelden (automatischer GITHUB_TOKEN)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Image bauen
+        run: |
+          docker build \
+            -f build/deploy/control-server/Dockerfile \
+            -t "$IMAGE:latest" \
+            -t "$IMAGE:${{ github.sha }}" \
+            build
+
+      - name: Smoke-Test (Container startet, /api/health ok)
+        run: |
+          docker run -d --name smoke -p 3000:3000 "$IMAGE:latest"
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/health.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/health.json
+          node -e "const h=require('/tmp/health.json'); if(!h.ok) process.exit(1);"
+          docker rm -f smoke
+
+      - name: Image pushen (latest + Commit-SHA)
+        run: |
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
