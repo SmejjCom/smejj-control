@@ -45,10 +45,23 @@ jobs:
       - name: Smoke-Test (Container startet, /api/health ok)
         run: |
           docker run -d --name smoke -p 3000:3000 "$IMAGE:latest"
-          for i in $(seq 1 15); do
-            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/health.json; then break; fi
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/health.json; then ok=1; break; fi
             sleep 1
           done
+          if [ "$ok" != "1" ]; then
+            echo "::group::docker ps -a"
+            docker ps -a
+            echo "::endgroup::"
+            echo "::group::docker logs smoke"
+            docker logs smoke || true
+            echo "::endgroup::"
+            echo "::group::container state"
+            docker inspect smoke --format '{{json .State}}' || true
+            echo "::endgroup::"
+            exit 1
+          fi
           cat /tmp/health.json
           node -e "const h=require('/tmp/health.json'); if(!h.ok) process.exit(1);"
           docker rm -f smoke
