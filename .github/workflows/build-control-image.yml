@@ -31,8 +31,8 @@ jobs:
           tar -xzf smejj-control-context.tar.gz -C build
           test -f build/deploy/control-server/Dockerfile
 
-      - name: Unit-Tests (Websuche) ausfuehren
-        run: node --test build/src/search/webSearch.test.js
+      - name: Unit-Tests (Websuche + Multi-KI-Router) ausfuehren
+        run: node --test build/src/search/webSearch.test.js build/control-server/src/llm/modelRouter.test.js
 
       - name: Bei ghcr.io anmelden (automatischer GITHUB_TOKEN)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
