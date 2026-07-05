@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - "smejj-control-context.tar.gz"
+      - "smejj-control-context.b64"
       - ".github/workflows/build-control-image.yml"
   workflow_dispatch: {}
 
@@ -28,6 +29,9 @@ jobs:
       - name: Build-Kontext entpacken
         run: |
           mkdir -p build
+          if [ -f smejj-control-context.b64 ]; then
+            base64 -d smejj-control-context.b64 > smejj-control-context.tar.gz
+          fi
           tar -xzf smejj-control-context.tar.gz -C build
           test -f build/deploy/control-server/Dockerfile
 
