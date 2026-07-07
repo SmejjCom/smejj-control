@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - "smejj-control-context.tar.gz"
+      - "deploy-overlays/control-server/**"
       - ".github/workflows/build-control-image.yml"
   workflow_dispatch: {}
 
@@ -29,6 +30,9 @@ jobs:
         run: |
           mkdir -p build
           tar -xzf smejj-control-context.tar.gz -C build
+          if [ -d deploy-overlays/control-server ]; then
+            cp -R deploy-overlays/control-server/. build/
+          fi
           test -f build/deploy/control-server/Dockerfile
 
       - name: Unit-Tests (Websuche + Multi-KI-Router) ausfuehren
