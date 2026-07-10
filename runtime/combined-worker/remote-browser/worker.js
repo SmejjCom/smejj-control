@@ -203,9 +203,14 @@ async function assertPublicHostname(hostname, dnsLookup) {
 }
 
 function isPrivateAddress(value) {
-  const address = String(value || "").toLowerCase().replace(/^\[|\]$/g, "");
-  if (isIP(address) === 6) return true;
-  if (isIP(address) !== 4) return true;
+  const address = String(value || "").toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
+  const version = isIP(address);
+  if (version === 6) return isPrivateIpv6Address(address);
+  if (version !== 4) return true;
+  return isPrivateIpv4Address(address);
+}
+
+function isPrivateIpv4Address(address) {
   const [a, b] = address.split(".").map(Number);
   const [, , c] = address.split(".").map(Number);
   return a === 0
@@ -220,6 +225,50 @@ function isPrivateAddress(value) {
     || (a === 192 && b === 168)
     || (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100)))
     || (a === 203 && b === 0 && c === 113);
+}
+
+function isPrivateIpv6Address(address) {
+  const parts = parseIpv6(address);
+  if (!parts) return true;
+
+  const ipv4Mapped = parts.slice(0, 5).every((part) => part === 0) && parts[5] === 0xffff;
+  if (ipv4Mapped) {
+    const mapped = `${parts[6] >> 8}.${parts[6] & 0xff}.${parts[7] >> 8}.${parts[7] & 0xff}`;
+    return isPrivateIpv4Address(mapped);
+  }
+
+  // Current globally routable IPv6 unicast space is 2000::/3. Keep known
+  // special-use ranges inside that block closed as well.
+  const [first, second, third] = parts;
+  if ((first & 0xe000) !== 0x2000) return true;
+  return (first === 0x2001 && second === 0x0000)
+    || (first === 0x2001 && second === 0x0002 && third === 0)
+    || (first === 0x2001 && (second & 0xfff0) === 0x0010)
+    || (first === 0x2001 && (second & 0xfff0) === 0x0020)
+    || (first === 0x2001 && second === 0x0db8)
+    || first === 0x2002
+    || (first === 0x3fff && (second & 0xf000) === 0);
+}
+
+function parseIpv6(value) {
+  let address = String(value || "").toLowerCase();
+  const ipv4Tail = address.match(/(\d{1,3}(?:\.\d{1,3}){3})$/)?.[1];
+  if (ipv4Tail) {
+    const octets = ipv4Tail.split(".").map(Number);
+    if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+    address = `${address.slice(0, -ipv4Tail.length)}${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
+  }
+  if ((address.match(/::/g) || []).length > 1) return null;
+  const compressed = address.includes("::");
+  const [leftRaw, rightRaw = ""] = address.split("::");
+  const left = leftRaw ? leftRaw.split(":") : [];
+  const right = rightRaw ? rightRaw.split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if ((!compressed && missing !== 0) || (compressed && missing < 1)) return null;
+  const parts = [...left, ...Array(missing).fill("0"), ...right].map((part) => Number.parseInt(part, 16));
+  return parts.length === 8 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 0xffff)
+    ? parts
+    : null;
 }
 
 export function buildPageOptions(viewport = {}) {
