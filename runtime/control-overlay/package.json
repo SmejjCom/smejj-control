@@ -1,0 +1,9 @@
+{
+  "name": "smejj.com-control-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/deploy/check-control-runtime.mjs"
+  }
+}
