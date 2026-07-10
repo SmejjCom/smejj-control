@@ -2,6 +2,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const FILES = [
+  "package.json",
+  "scripts/deploy/check-control-runtime.mjs",
   "src/server.js",
   "src/shared/platform.js",
   "src/shared/modelRegistry.js",
