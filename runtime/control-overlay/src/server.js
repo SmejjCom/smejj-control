@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { APP_INFO, CAPABILITIES, COST_POLICY, ROUTES, SECURITY_HEADERS, STORAGE } from "./shared/platform.js";
-import { SECURITY_LIMITS, isAllowedRequestOrigin } from "./shared/securityPolicy.js";
+import { SECURITY_LIMITS } from "./shared/securityPolicy.js";
 import { json, readJson } from "../control-server/src/http/respond.js";
 import { hmac } from "../control-server/src/shared/hash.js";
 import { parseS3Keys, signedS3List } from "../control-server/src/storage/s3Signer.js";
@@ -40,7 +40,7 @@ import { installCrashGuard } from "../control-server/src/http/crashGuard.js";
 import { createStaticHandlers } from "./http/staticServing.js";
 import { loadDotEnv, normalizeSecret } from "./shared/env.js";
 import { resolveTerminalCommand } from "./shared/terminalPolicy.js";
-import { requiresAuthenticatedControlAccess } from "./shared/controlAccessPolicy.js";
+import { isSafeMutatingControlRequest, requiresAuthenticatedControlAccess } from "./shared/controlAccessPolicy.js";
 import { createPublicModelRateGate } from "./shared/modelRatePolicy.js";
 import { bearerSessionToken, issueSessionToken, verifySessionToken } from "../control-server/src/auth/sessionToken.js";
 
@@ -81,7 +81,7 @@ const server = http.createServer(async (req, res) => {
       const cors = corsHeadersFor(req.headers.origin);
       if (cors) for (const [name, value] of Object.entries(cors)) res.setHeader(name, value);
     }
-    if (!isSafeMutatingRequest(req, url)) return json(res, 403, { error: "Origin not allowed" });
+    if (!isSafeMutatingControlRequest(req, url)) return json(res, 403, { error: "Origin not allowed" });
     if (requiresAuthenticatedControlAccess(req, url)) {
       const authenticatedUser = readSession(req);
       if (!authenticatedUser) return json(res, 401, { ok: false, error: "authentication_required" });
@@ -508,7 +508,10 @@ async function streamLLM(res, messages, { profile = "default", requestedModel = 
       requestedModelId: selection.requestedModelId
     });
   }
-  const result = await executeWithFallback(chain, messages, { temperature: 1.0 });
+  const result = await executeWithFallback(chain, messages, {
+    temperature: 1.0,
+    maxTokens: boundedInteger(process.env.SMEJJ_PUBLIC_MODEL_MAX_TOKENS, 512, 8_192, 4_096)
+  });
   if (!result.ok || !result.response.body) {
     return json(res, 502, { error: "All model backends failed.", attempts: result.attempts });
   }
@@ -524,6 +527,11 @@ async function streamLLM(res, messages, { profile = "default", requestedModel = 
   });
   await pipeVisibleModelStream(result.response.body, res);
   res.end();
+}
+
+function boundedInteger(value, min, max, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.floor(number))) : fallback;
 }
 
 function localAssistantStream(res, messages) {
@@ -640,14 +648,6 @@ function readAuthBody(req) {
       }
     });
   });
-}
-
-function isSafeMutatingRequest(req, url) {
-  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method || "")) return true;
-  const origin = String(req.headers.origin || "");
-  const allowed = [`http://${req.headers.host}`, "https://smejj.com", "https://www.smejj.com"];
-  if (url.pathname === ROUTES.api.authGoogle) allowed.push("https://accounts.google.com");
-  return isAllowedRequestOrigin(origin, allowed);
 }
 
 async function verifyGoogleIdToken(token, expectedNonce = "") {
