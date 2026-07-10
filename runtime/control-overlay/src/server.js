@@ -104,7 +104,7 @@ const server = http.createServer(async (req, res) => {
     if (readMethod && url.pathname === ROUTES.api.authMe) return handleAuthMe(req, res);
     if (readMethod && url.pathname === ROUTES.api.authSessionToken) return handleAuthSessionToken(req, res);
     if (req.method === "POST" && url.pathname === ROUTES.api.authSessionHandoffStart) return await handleSessionHandoffStart(req, res);
-    if (req.method === "POST" && url.pathname === ROUTES.api.authSessionHandoffComplete) return await handleSessionHandoffComplete(req, res);
+    if (["GET", "POST"].includes(req.method) && url.pathname === ROUTES.api.authSessionHandoffComplete) return await handleSessionHandoffComplete(req, url, res);
     if (readMethod && url.pathname.startsWith(`${ROUTES.api.authSessionHandoff}/`)) return handleSessionHandoffPoll(req, url, res);
     if (readMethod && url.pathname === ROUTES.api.authGoogle) {
       try {
@@ -255,12 +255,23 @@ async function handleSessionHandoffStart(req, res) {
   return noStoreJson(res, result.status, result);
 }
 
-async function handleSessionHandoffComplete(req, res) {
-  const body = await readJson(req);
-  const result = sessionHandoffStore.complete(body.handoffId, {
+async function handleSessionHandoffComplete(req, url, res) {
+  const handoffId = req.method === "GET"
+    ? url.searchParams.get("handoffId")
+    : (await readJson(req)).handoffId;
+  const result = sessionHandoffStore.complete(handoffId, {
     token: serializeSessionToken(req.authUser),
     user: req.authUser
   });
+  if (req.method === "GET" && result.ok) {
+    res.writeHead(303, {
+      ...SECURITY_HEADERS,
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
+      Location: "/profile?session-handoff-complete=1"
+    });
+    return res.end();
+  }
   return noStoreJson(res, result.status, result.ok
     ? { ok: true, state: "completed", expiresAt: result.expiresAt }
     : result);

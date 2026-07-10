@@ -133,7 +133,7 @@ async function openSessionHandoff() {
     });
     const handoffId = String(started.id || "");
     if (!/^[A-Za-z0-9_-]{43}$/.test(handoffId)) throw new Error("Anmeldecode ist ungueltig.");
-    popup.location.replace(`${API_ORIGIN}/profile?session-handoff=${encodeURIComponent(handoffId)}&returnOrigin=${encodeURIComponent(returnOrigin)}`);
+    popup.location.replace(`${API_ORIGIN}/api/auth/session-handoff/complete?handoffId=${encodeURIComponent(handoffId)}`);
     setNotice("Anmeldung wird verbunden.");
     await pollSessionHandoff({ generation, handoffId, expiresAt: Number(started.expiresAt), popup });
   } catch (error) {
