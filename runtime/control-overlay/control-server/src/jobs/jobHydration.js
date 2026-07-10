@@ -1,6 +1,6 @@
 import { createIdriveLiteCodingJob } from "../../../src/jobs/index.js";
-import { signedS3Get } from "../storage/s3Signer.js";
-import { saveJob } from "./jobStore.js";
+import { parseS3Keys, signedS3Get, signedS3List } from "../storage/s3Signer.js";
+import { getJob, saveJob } from "./jobStore.js";
 
 const DURABLE_STATUSES = new Set(["queued", "planning", "running", "verifying", "passed", "failed", "cancelled", "blocked"]);
 
@@ -68,6 +68,40 @@ export async function hydrateJobFromIdrive(jobId, { env = process.env, getObject
   } catch {
     return null;
   }
+}
+
+export async function hydrateRecentJobsFromIdrive({
+  env = process.env,
+  limit = 50,
+  listObjects,
+  hydrateJob = hydrateJobFromIdrive
+} = {}) {
+  if (!hasIdrive(env)) return { ok: false, reason: "idrive_e2_not_configured", hydrated: [] };
+  const listing = listObjects
+    ? await listObjects("jobs/open/")
+    : await signedS3List({
+        endpoint: env.IDRIVE_E2_ENDPOINT,
+        region: env.IDRIVE_E2_REGION || "us-west-2",
+        accessKey: env.IDRIVE_E2_ACCESS_KEY,
+        secretKey: env.IDRIVE_E2_SECRET_KEY,
+        bucket: env.IDRIVE_E2_BUCKET,
+        prefix: "jobs/open/"
+      });
+  const response = listing?.response || { ok: true, status: 200 };
+  if (!response.ok) return { ok: false, reason: `idrive_list_failed_${response.status}`, hydrated: [] };
+  const keys = Array.isArray(listing?.keys) ? listing.keys : parseS3Keys(String(listing?.body || ""));
+  const jobIds = keys
+    .map((key) => String(key).match(/^jobs\/open\/([a-zA-Z0-9][a-zA-Z0-9._-]{1,120})\.json$/)?.[1])
+    .filter(Boolean)
+    .slice(-Math.min(100, Math.max(1, Number(limit) || 50)))
+    .reverse();
+  const hydrated = [];
+  for (let offset = 0; offset < jobIds.length; offset += 5) {
+    const batch = jobIds.slice(offset, offset + 5);
+    const results = await Promise.all(batch.map(async (jobId) => getJob(jobId) || hydrateJob(jobId, { env })));
+    hydrated.push(...results.filter(Boolean).map((job) => job.id));
+  }
+  return { ok: true, hydrated, scanned: jobIds.length };
 }
 
 async function optionalText(reader, key) {

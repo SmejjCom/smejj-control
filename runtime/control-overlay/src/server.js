@@ -100,6 +100,7 @@ const server = http.createServer(async (req, res) => {
     if (readMethod && url.pathname === ROUTES.api.capabilities) return handleCapabilities(res);
     if (readMethod && url.pathname === ROUTES.api.authConfig) return handleAuthConfig(res);
     if (readMethod && url.pathname === ROUTES.api.authMe) return handleAuthMe(req, res);
+    if (readMethod && url.pathname === ROUTES.api.authSessionToken) return handleAuthSessionToken(req, res);
     if (readMethod && url.pathname === ROUTES.api.authGoogle) {
       try {
         return await handleGoogleAuthStart(req, res, url);
@@ -152,15 +153,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === ROUTES.api.saladStart) return await handleSaladStart(res);
     if (req.method === "POST" && url.pathname === ROUTES.api.saladStop) return await handleSaladStop(res);
     if (req.method === "POST" && url.pathname === ROUTES.api.jobs) return await handleCreateJob(req, res);
-    if (readMethod && url.pathname === ROUTES.api.jobs) return handleListJobs(url, res);
+    if (readMethod && url.pathname === ROUTES.api.jobs) return await handleListJobs(url, res);
     if (readMethod && url.pathname === ROUTES.api.jobQueue) return handleJobQueue(res);
     if (req.method === "POST" && url.pathname === ROUTES.api.freeExecutor) return await handleFreeExecutor(req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/status")) return await handleWorkerStatusUpdate(url, req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/cancel")) return await handleCancelJob(url, req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/approve")) return await handleApproveJob(url, req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/autonomous-run")) return await handleAutonomousRun(url, req, res);
-    if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/events")) return handleJobEvents(url, req, res);
-    if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`)) return handleJobStatus(url, res);
+    if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/events")) return await handleJobEvents(url, req, res);
+    if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`)) return await handleJobStatus(url, res);
     if (readMethod && isAppRoute(url.pathname)) return serveFile(res, "index.html");
     json(res, 404, { error: "Not found" });
   } catch (error) {
@@ -225,6 +226,17 @@ function handleAuthConfig(res) {
 function handleAuthMe(req, res) {
   const user = readSession(req);
   json(res, 200, { authenticated: Boolean(user), user });
+}
+
+function handleAuthSessionToken(req, res) {
+  const user = readSession(req);
+  if (!user) return json(res, 401, { authenticated: false, error: "authentication_required" });
+  return json(res, 200, {
+    authenticated: true,
+    user,
+    accessToken: serializeSessionToken(user),
+    tokenStorage: "session-only"
+  });
 }
 
 async function handleGoogleAuth(req, res) {

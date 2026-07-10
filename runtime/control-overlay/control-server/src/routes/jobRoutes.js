@@ -16,7 +16,7 @@ import { json, readJson, readRawBody } from "../http/respond.js";
 import { signedS3Put } from "../storage/s3Signer.js";
 import { getJob, listJobs, replaceJob, saveJob, subscribeToJob } from "../jobs/jobStore.js";
 import { persistJobApprovalToIdrive, persistJobCancellationToIdrive, persistPublicationAttemptToIdrive, persistWorkerOutcomeToIdrive } from "../jobs/jobArtifacts.js";
-import { hydrateJobFromIdrive } from "../jobs/jobHydration.js";
+import { hydrateJobFromIdrive, hydrateRecentJobsFromIdrive } from "../jobs/jobHydration.js";
 import { openEventStream, sendEvent, startHeartbeat } from "../streaming/sse.js";
 import { verifyWorkerSignature } from "../auth/workerAuth.js";
 import { buildHttpDispatch, createAutonomousRunner } from "../orchestrator/autonomousRunner.js";
@@ -31,7 +31,8 @@ export function hasLocalIdriveConfig(env = process.env) {
 }
 
 export async function handleCreateJob(req, res, { env = process.env, writeEnvelope = writeJobEnvelopeToIdrive } = {}) {
-  const body = await readJson(req);
+  const input = await readJson(req);
+  const body = req.authUser ? { ...input, userId: authenticatedUserId(req.authUser) } : input;
   if (!String(body.task || "").trim()) return json(res, 400, { error: "Missing task" });
   const envelope = createStorageFirstJobEnvelope({ body, env });
   if (getJob(envelope.job.id)) return json(res, 409, { ok: false, error: "job_already_exists", jobId: envelope.job.id });
@@ -79,9 +80,15 @@ export async function handleCreateJob(req, res, { env = process.env, writeEnvelo
   return json(res, 201, envelope);
 }
 
-export function handleListJobs(url, res) {
+export async function handleListJobs(url, res, {
+  env = process.env,
+  hydrateJobs = hydrateRecentJobsFromIdrive
+} = {}) {
+  if (url.searchParams.get("hydrate") === "1") {
+    await hydrateJobs({ env, limit: Number(url.searchParams.get("limit") || 50) }).catch(() => null);
+  }
   const status = String(url.searchParams.get("status") || "").trim();
-  const jobs = listJobs({ status, limit: Number(url.searchParams.get("limit") || 100) });
+  const jobs = listJobs({ status, limit: Number(url.searchParams.get("limit") || 100) }).map(jobSummary);
   return json(res, 200, { ok: true, count: jobs.length, jobs, queue: currentScheduler().snapshot() });
 }
 
@@ -165,9 +172,12 @@ function assertSmallControlObject(object) {
   if (body.length > 1_000_000) throw new Error("IDrive object body too large for control server");
 }
 
-export function handleJobStatus(url, res) {
+export async function handleJobStatus(url, res, {
+  env = process.env,
+  hydrateJob = hydrateJobFromIdrive
+} = {}) {
   const jobId = decodeURIComponent(url.pathname.slice(`${ROUTES.api.jobs}/`.length));
-  const job = getJob(jobId);
+  const job = getJob(jobId) || await hydrateJob(jobId, { env });
   if (!job) return json(res, 404, { ok: false, error: "Job not found in local memory. Durable source is the IDrive e2 Task Capsule." });
   return json(res, 200, {
     ok: true,
@@ -332,11 +342,14 @@ function isRunnableJob(job, body) {
     && job.approval.approvedDiffSha256 === job.result?.diffSha256;
 }
 
-export function handleJobEvents(url, req, res) {
+export async function handleJobEvents(url, req, res, {
+  env = process.env,
+  hydrateJob = hydrateJobFromIdrive
+} = {}) {
   const suffix = "/events";
   const rawId = url.pathname.slice(`${ROUTES.api.jobs}/`.length, url.pathname.length - suffix.length);
   const jobId = decodeURIComponent(rawId);
-  const job = getJob(jobId);
+  const job = getJob(jobId) || await hydrateJob(jobId, { env });
   if (!job) return json(res, 404, { ok: false, error: "Job not found in local memory. Durable source is the IDrive e2 Task Capsule." });
 
   openEventStream(res);
@@ -365,4 +378,25 @@ function currentScheduler(env = process.env) {
 function routeJobId(url, suffix) {
   const rawId = url.pathname.slice(`${ROUTES.api.jobs}/`.length, url.pathname.length - suffix.length);
   return decodeURIComponent(rawId);
+}
+
+function authenticatedUserId(user = {}) {
+  const value = String(user.userId || user.sub || user.email || "").toLowerCase();
+  let hash = 2166136261;
+  for (const char of value) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `user_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function jobSummary(job) {
+  const result = job.result ? {
+    ok: job.result.ok,
+    status: job.result.status,
+    diffSha256: job.result.diffSha256 || null,
+    finalReport: String(job.result.finalReport || "").slice(0, 500),
+    repository: job.result.repository || null
+  } : null;
+  return { ...job, task: String(job.task || "").slice(0, 500), ...(result ? { result } : {}) };
 }

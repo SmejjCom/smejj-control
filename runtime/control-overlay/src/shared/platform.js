@@ -149,6 +149,7 @@ export const ROUTES = {
     authGoogle: "/api/auth/google",
     authMe: "/api/auth/me",
     authLogout: "/api/auth/logout",
+    authSessionToken: "/api/auth/session-token",
     passkeyRegisterOptions: "/api/auth/passkey/register/options",
     passkeyRegisterVerify: "/api/auth/passkey/register/verify",
     passkeyLoginOptions: "/api/auth/passkey/login/options",
