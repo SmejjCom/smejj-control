@@ -6,6 +6,7 @@ const USER_PROTECTED_EXACT_PATHS = new Set([
   ROUTES.api.jobQueue,
   ROUTES.api.freeExecutor,
   ROUTES.api.authSessionToken,
+  ROUTES.api.authSessionHandoffComplete,
   ROUTES.api.passkeyRegisterOptions,
   ROUTES.api.passkeyRegisterVerify,
   ROUTES.api.terminalRun,

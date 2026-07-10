@@ -21,6 +21,7 @@ const FILES = [
   "src/jobs/taskCapsuleWriter.js",
   "control-server/src/auth/workerToken.js",
   "control-server/src/auth/sessionToken.js",
+  "control-server/src/auth/sessionHandoff.js",
   "control-server/src/jobs/jobStore.js",
   "control-server/src/jobs/memoryEligibility.js",
   "control-server/src/jobs/jobArtifacts.js",

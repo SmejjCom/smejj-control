@@ -7,6 +7,7 @@ const TERMINAL_STATUSES = new Set(["passed", "failed", "cancelled", "blocked", "
 let selectedJob = null;
 let streamController = null;
 let pollTimer = null;
+let handoffGeneration = 0;
 
 export function initAutonomousCodingSurface() {
   const view = document.querySelector("#automation");
@@ -81,7 +82,7 @@ function surfaceMarkup() {
 
 function bindSurface(surface) {
   surface.querySelector("#acStart").addEventListener("click", () => createAndRun().catch(showError));
-  surface.querySelector("#acConnect").addEventListener("click", openSessionHandoff);
+  surface.querySelector("#acConnect").addEventListener("click", () => openSessionHandoff().catch(showError));
   surface.querySelector("#acRefresh").addEventListener("click", () => refreshJobs(true).catch(showError));
   surface.querySelector("#acCancel").addEventListener("click", () => cancelSelected().catch(showError));
   surface.querySelector("#acApprove").addEventListener("click", () => approveSelected().catch(showError));
@@ -116,19 +117,55 @@ async function refreshSession() {
   }
 }
 
-function openSessionHandoff() {
+async function openSessionHandoff() {
+  const generation = ++handoffGeneration;
   const returnOrigin = location.origin;
-  const url = `${API_ORIGIN}/profile?session-handoff=1&returnOrigin=${encodeURIComponent(returnOrigin)}`;
-  const popup = window.open(url, "smejj-session-handoff", "popup,width=520,height=720");
-  setNotice(popup ? "Anmeldung wird verbunden." : "Popup wurde blockiert.");
+  const popup = window.open("about:blank", "smejj-session-handoff", "popup,width=520,height=720");
+  if (!popup) {
+    setNotice("Popup wurde blockiert.");
+    return;
+  }
+  setNotice("Sichere Anmeldung wird vorbereitet.");
+  try {
+    const started = await api(`${API_ORIGIN}/api/auth/session-handoff/start`, {
+      method: "POST",
+      body: { returnOrigin }
+    });
+    const handoffId = String(started.id || "");
+    if (!/^[A-Za-z0-9_-]{43}$/.test(handoffId)) throw new Error("Anmeldecode ist ungueltig.");
+    popup.location.replace(`${API_ORIGIN}/profile?session-handoff=${encodeURIComponent(handoffId)}&returnOrigin=${encodeURIComponent(returnOrigin)}`);
+    setNotice("Anmeldung wird verbunden.");
+    await pollSessionHandoff({ generation, handoffId, expiresAt: Number(started.expiresAt), popup });
+  } catch (error) {
+    try { popup.close(); } catch {}
+    throw error;
+  }
 }
 
 async function handleSessionHandoff(event) {
   if (event.origin !== new URL(API_ORIGIN).origin || event.data?.type !== "smejj:session-handoff") return;
-  const token = String(event.data.accessToken || "");
+  await activateHandoffSession(event.data);
+}
+
+async function pollSessionHandoff({ generation, handoffId, expiresAt, popup }) {
+  while (generation === handoffGeneration && Date.now() < expiresAt) {
+    const result = await api(`${API_ORIGIN}/api/auth/session-handoff/${encodeURIComponent(handoffId)}`);
+    if (result.state === "completed") {
+      try { popup.close(); } catch {}
+      await activateHandoffSession(result);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  try { popup.close(); } catch {}
+  if (generation === handoffGeneration) throw new Error("Anmeldung ist abgelaufen. Bitte erneut versuchen.");
+}
+
+async function activateHandoffSession(data) {
+  const token = String(data.accessToken || "");
   if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return;
   sessionStorage.setItem(API_TOKEN_KEY, token);
-  setAuthState(true, event.data.user);
+  setAuthState(true, data.user);
   setNotice("Anmeldung aktiv.");
   await refreshJobs(true).catch(showError);
 }

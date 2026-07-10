@@ -35,7 +35,7 @@ import { createRateLimiter } from "./shared/rateLimiter.js";
 import { classifyProfile, executeWithFallback, resolveModelRequest } from "../control-server/src/llm/modelRouter.js";
 import { evaluateAiAvailability } from "../control-server/src/llm/aiAvailability.js";
 import { pipeVisibleModelStream } from "../control-server/src/llm/streamFilter.js";
-import { corsHeadersFor, handlePreflight } from "../control-server/src/http/cors.js";
+import { allowedOriginsFromEnv, corsHeadersFor, handlePreflight } from "../control-server/src/http/cors.js";
 import { installCrashGuard } from "../control-server/src/http/crashGuard.js";
 import { createStaticHandlers } from "./http/staticServing.js";
 import { loadDotEnv, normalizeSecret } from "./shared/env.js";
@@ -43,6 +43,7 @@ import { resolveTerminalCommand } from "./shared/terminalPolicy.js";
 import { isSafeMutatingControlRequest, requiresAuthenticatedControlAccess } from "./shared/controlAccessPolicy.js";
 import { createPublicModelRateGate } from "./shared/modelRatePolicy.js";
 import { bearerSessionToken, issueSessionToken, verifySessionToken } from "../control-server/src/auth/sessionToken.js";
+import { createSessionHandoffStore, isSessionHandoffId } from "../control-server/src/auth/sessionHandoff.js";
 
 installCrashGuard(); // kein stiller Tod: unbehandelte Fehler -> Log mit Stack + Exit 1 (Probes uebernehmen)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,7 @@ const config = {
 
 const forbiddenSegments = new Set([".env", ".git", "node_modules", "dist", "build"]);
 const publicModelRateGate = createPublicModelRateGate(process.env);
+const sessionHandoffStore = createSessionHandoffStore();
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -101,6 +103,9 @@ const server = http.createServer(async (req, res) => {
     if (readMethod && url.pathname === ROUTES.api.authConfig) return handleAuthConfig(res);
     if (readMethod && url.pathname === ROUTES.api.authMe) return handleAuthMe(req, res);
     if (readMethod && url.pathname === ROUTES.api.authSessionToken) return handleAuthSessionToken(req, res);
+    if (req.method === "POST" && url.pathname === ROUTES.api.authSessionHandoffStart) return await handleSessionHandoffStart(req, res);
+    if (req.method === "POST" && url.pathname === ROUTES.api.authSessionHandoffComplete) return await handleSessionHandoffComplete(req, res);
+    if (readMethod && url.pathname.startsWith(`${ROUTES.api.authSessionHandoff}/`)) return handleSessionHandoffPoll(req, url, res);
     if (readMethod && url.pathname === ROUTES.api.authGoogle) {
       try {
         return await handleGoogleAuthStart(req, res, url);
@@ -237,6 +242,45 @@ function handleAuthSessionToken(req, res) {
     accessToken: serializeSessionToken(user),
     tokenStorage: "session-only"
   });
+}
+
+async function handleSessionHandoffStart(req, res) {
+  const origin = requestOrigin(req);
+  const body = await readJson(req);
+  const returnOrigin = String(body.returnOrigin || "").replace(/\/$/, "");
+  if (!allowedOriginsFromEnv(process.env).includes(origin) || returnOrigin !== origin) {
+    return noStoreJson(res, 403, { ok: false, error: "session_handoff_origin_not_allowed" });
+  }
+  const result = sessionHandoffStore.start(returnOrigin);
+  return noStoreJson(res, result.status, result);
+}
+
+async function handleSessionHandoffComplete(req, res) {
+  const body = await readJson(req);
+  const result = sessionHandoffStore.complete(body.handoffId, {
+    token: serializeSessionToken(req.authUser),
+    user: req.authUser
+  });
+  return noStoreJson(res, result.status, result.ok
+    ? { ok: true, state: "completed", expiresAt: result.expiresAt }
+    : result);
+}
+
+function handleSessionHandoffPoll(req, url, res) {
+  const handoffId = decodeURIComponent(url.pathname.slice(`${ROUTES.api.authSessionHandoff}/`.length));
+  if (!isSessionHandoffId(handoffId)) return noStoreJson(res, 404, { ok: false, error: "session_handoff_not_found" });
+  const result = sessionHandoffStore.consume(handoffId, requestOrigin(req));
+  return noStoreJson(res, result.status, result);
+}
+
+function noStoreJson(res, status, payload) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  return json(res, status, payload);
+}
+
+function requestOrigin(req) {
+  return String(req.headers.origin || "").trim().replace(/\/$/, "");
 }
 
 async function handleGoogleAuth(req, res) {
