@@ -33,6 +33,7 @@ async function collectSources(directory, files) {
     throw error;
   }
   for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
     const target = path.join(directory, entry.name);
     if (entry.isDirectory()) await collectSources(target, files);
     else if (entry.isFile() && /\.(?:m?js)$/.test(entry.name)) files.push(target);
