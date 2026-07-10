@@ -1,9 +1,16 @@
 import crypto from "node:crypto";
 
 const DEFAULT_TTL_MS = 65 * 60 * 1000;
+const WORKER_TOKEN_DERIVATION_CONTEXT = "smejj.com/worker-token/v1";
 
 export function workerTokenSecret(env = process.env) {
-  return String(env.SMEJJ_WORKER_TOKEN_SECRET || env.SMEJJ_WORKER_CALLBACK_SECRET || "").trim();
+  const dedicated = String(env.SMEJJ_WORKER_TOKEN_SECRET || env.SMEJJ_WORKER_CALLBACK_SECRET || "").trim();
+  if (dedicated) return dedicated;
+  const sessionSecret = String(env.SMEJJ_SESSION_SECRET || env.GOOGLE_SESSION_SECRET || "").trim();
+  if (!sessionSecret) return "";
+  return crypto.createHmac("sha256", sessionSecret)
+    .update(WORKER_TOKEN_DERIVATION_CONTEXT)
+    .digest("base64url");
 }
 
 export function issueWorkerToken({ secret, jobId, scopes = ["validate", "model"], nowMs = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
