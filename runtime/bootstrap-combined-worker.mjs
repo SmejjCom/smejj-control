@@ -11,6 +11,7 @@ const WORKER_FILES = [
   "model-client.mjs",
   "browser-verification.mjs",
   "publish.mjs",
+  "role-registry.mjs",
   "agentloop.mjs"
 ];
 

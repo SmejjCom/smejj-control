@@ -14,8 +14,9 @@ export function createJobScheduler({ maxConcurrency = 1 } = {}) {
   function cancel(jobId) {
     const index = queue.findIndex((item) => item.jobId === jobId);
     if (index >= 0) {
-      queue.splice(index, 1);
-      return { ok: true, cancelled: "queued" };
+      const [item] = queue.splice(index, 1);
+      const abortRequested = item.cancel?.() === true;
+      return { ok: true, cancelled: "queued", abortRequested };
     }
     const running = active.get(jobId);
     if (!running) return { ok: false, reason: "job_not_scheduled" };

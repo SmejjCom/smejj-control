@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { signedS3Put } from "../storage/s3Signer.js";
+import { evaluateMemoryEligibility } from "./memoryEligibility.js";
 
 const MAX_OBJECT_BYTES = 1_000_000;
 
@@ -126,7 +127,8 @@ export function buildWorkerOutcomeObjects(job, outcome, options = {}) {
   const iterations = compactIterations(outcome.iterations);
   const errors = compactErrors(outcome.errors);
   const browser = { ...(outcome.browser || {}), screenshots: (outcome.browser?.screenshots || []).map((item) => ({ name: item.name, contentType: item.contentType })) };
-  const memoryMayLearn = outcome.ok === true && outcome.memoryUpdate?.learn === true;
+  const memoryEligibility = evaluateMemoryEligibility(outcome);
+  const memoryMayLearn = memoryEligibility.eligible;
   const finalStatus = jsonObject(capsule.status, {
     jobId: job.id,
     status,
@@ -135,21 +137,37 @@ export function buildWorkerOutcomeObjects(job, outcome, options = {}) {
     message: outcome.finalReport || status,
     memoryMayLearn,
     memoryUpdateKey: memoryMayLearn ? capsule.memoryUpdate : null,
+    memoryEligibilityReasons: memoryEligibility.reasons,
+    trainingEligible: false,
+    trainingEligibilityKey: capsule.trainingEligibility || null,
     updatedAt: now
   });
   const objects = [
     textObject(capsule.patch, outcome.diff || "", "text/x-diff; charset=utf-8"),
+    jsonObject(`${capsule.rootPrefix}change-set.json`, outcome.changeSet || { schemaVersion: 1, changes: [] }),
     jsonObject(capsule.testResults, verification || { ok: false, error: "missing_verification" }),
     jsonObject(capsule.browserResults, browser),
     jsonObject(capsule.errors, { status, errors }),
     jsonObject(capsule.selfFixAttempts, { status, attempts: iterations }),
+    jsonObject(capsule.actionLog || `${capsule.rootPrefix}action-log.json`, compactActionLog(outcome.actionLog, outcome.actionLogSha256, job.id, now)),
     textObject(capsule.verifierReport, verifierReport(outcome), "text/markdown; charset=utf-8"),
     jsonObject(capsule.benchmarkResults, { status, durationMs: outcome.verification?.durationMs || 0, metrics: [] }),
     textObject(capsule.finalReport, outcome.finalReport || "", "text/markdown; charset=utf-8"),
-    jsonObject(capsule.memoryUpdate, pendingMemoryUpdate(outcome, capsule)),
+    jsonObject(capsule.memoryUpdate, pendingMemoryUpdate(outcome, capsule, memoryEligibility)),
+    jsonObject(capsule.trainingEligibility || `${capsule.rootPrefix}training-eligibility.json`, {
+      schemaVersion: 1,
+      jobId: job.id,
+      trainingEligible: false,
+      state: "operational-outcome-not-training-cleared",
+      automaticPromotionAllowed: false,
+      operationalMemoryIsTrainingPermission: false,
+      reasons: ["separate-training-rights-privacy-quality-gate-required"],
+      createdAt: now
+    }),
     jsonObject(capsule.rollbackManifest, outcome.rollback || { baseCommit: null }),
     jsonObject(`${capsule.rootPrefix}repository.json`, compactRepository(outcome.repository)),
     jsonObject(`${capsule.rootPrefix}approval.json`, outcome.approval || { required: true }),
+    jsonObject(`${capsule.rootPrefix}worker-runtime.json`, compactWorkerRuntime(outcome.workerRuntime)),
     jsonObject(`${capsule.rootPrefix}execution-log.json`, iterations),
     ...transitionEvents.map((event) => jsonObject(event.key, event)),
     jsonObject(outcomeEvent.key, outcomeEvent),
@@ -168,9 +186,10 @@ export function buildWorkerOutcomeObjects(job, outcome, options = {}) {
   return objects;
 }
 
-function pendingMemoryUpdate(outcome, capsule) {
-  if (outcome.ok !== true) return { learn: false, reason: "verification_failed" };
-  if (outcome.memoryUpdate?.learn !== true) return { learn: false, reason: "no_verified_memory_candidate" };
+function pendingMemoryUpdate(outcome, capsule, eligibility) {
+  if (eligibility?.eligible !== true) {
+    return { learn: false, state: "blocked", reasons: eligibility?.reasons || ["memory_eligibility_not_proven"] };
+  }
   const { learn: _ignored, ...candidate } = outcome.memoryUpdate || {};
   return {
     learn: false,
@@ -219,12 +238,49 @@ function compactIterations(value) {
   }));
 }
 
+function compactActionLog(value, actionLogSha256, jobId, createdAt) {
+  if (!value || !/^[a-f0-9]{64}$/.test(String(actionLogSha256 || ""))) {
+    return {
+      schemaVersion: 1,
+      jobId,
+      status: "unavailable",
+      deterministicReplayReady: false,
+      actions: [],
+      createdAt
+    };
+  }
+  return {
+    schemaVersion: 1,
+    jobId,
+    status: "ready",
+    deterministicReplayReady: true,
+    actionLogSha256,
+    plan: {
+      ...value,
+      actions: (value.actions || []).slice(0, 200)
+    },
+    createdAt
+  };
+}
+
 function compactErrors(value) {
   return (Array.isArray(value) ? value : []).slice(0, 60).map((item) => ({ ...item, detail: limitText(item.detail, 4_000) }));
 }
 
 function compactRepository(value = {}) {
   return { ...value, workingTreeStatus: limitText(value?.workingTreeStatus, 50_000) };
+}
+
+function compactWorkerRuntime(value = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { mode: "not-recorded", stopVerified: false, completionPersisted: false };
+  }
+  const allowed = [
+    "mode", "provider", "groupName", "image", "sourceCommit", "manifestSha256",
+    "leaseId", "deadlineAt", "budgetApproved", "gatewayOrigin", "stopVerified",
+    "completionPersisted", "stopAttempts", "deletionPerformed", "secretsInContainerEnvironment"
+  ];
+  return Object.fromEntries(allowed.filter((key) => value[key] !== undefined).map((key) => [key, value[key]]));
 }
 
 function limitText(value, limit) {

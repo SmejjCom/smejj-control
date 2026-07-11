@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { transitionIdriveLiteJob } from "../../../src/jobs/index.js";
 import { issueWorkerToken, workerTokenSecret } from "../auth/workerToken.js";
 import { getJob, replaceJob } from "../jobs/jobStore.js";
+import { evaluateMemoryEligibility } from "../jobs/memoryEligibility.js";
 
 const MAX_SELF_FIX_ATTEMPTS = 3;
 
@@ -15,6 +16,7 @@ export function createAutonomousRunner({
   },
   persistOutcome = async () => ({ ok: true, mode: "persistence_not_requested" }),
   persistPublicationAttempt = async () => ({ ok: true, mode: "persistence_not_requested" }),
+  prepareWorkerPayload = async (payload) => payload,
   maxSelfFixAttempts = MAX_SELF_FIX_ATTEMPTS,
   now = () => new Date().toISOString()
 } = {}) {
@@ -27,8 +29,11 @@ export function createAutonomousRunner({
     if (!new Set(["open", "queued"]).has(job.status) && !publicationRun) {
       return { ok: false, stage: "claim", reason: "job_not_runnable", status: job.status, memoryMayLearn: false };
     }
-    let current = applyTransition(job, "planning", "Autonomous loop started");
-    current = applyTransition(current, "running", "Queued for stateless worker dispatch");
+    let current = job;
+    if (!publicationRun) {
+      current = applyTransition(job, "planning", "Autonomous loop started");
+      current = applyTransition(current, "running", "Queued for stateless worker dispatch");
+    }
     const attempts = [];
     let previousErrors = [];
     let lastOutcome = null;
@@ -41,7 +46,8 @@ export function createAutonomousRunner({
         return { ok: false, stage: "cancelled", attempts, memoryMayLearn: false, memoryUpdate: null, finishedAt: now() };
       }
       try {
-        lastOutcome = await dispatch(workerPayload(job, input, { attempt, maxAttempts: attemptLimit, previousErrors }, loadJob));
+        const payload = workerPayload(job, input, { attempt, maxAttempts: attemptLimit, previousErrors }, loadJob);
+        lastOutcome = await dispatch(await prepareWorkerPayload(payload, { job, input, attempt }));
       } catch (error) {
         lastOutcome = { ok: false, errors: [{ source: "dispatch", detail: String(error?.message || error).slice(0, 500) }] };
       }
@@ -51,10 +57,37 @@ export function createAutonomousRunner({
       }
 
       if (lastOutcome.ok === true) {
+        if (publicationRun) {
+          const publication = publicationRecord(lastOutcome, attempts, now());
+          persistence = await persistWithRetry(() => persistPublicationAttempt({ job, publication, outcome: lastOutcome }));
+          const auditedPublication = {
+            ...publication,
+            auditPersisted: persistence.ok === true,
+            auditPersistence: persistence
+          };
+          replaceJob({
+            ...job,
+            publication: auditedPublication,
+            publicationPersistence: persistence,
+            approval: { ...(job.approval || {}), mergeAllowed: false }
+          }, { event: "job.publication" });
+          return {
+            ok: persistence.ok === true,
+            stage: persistence.ok === true ? "publication" : "publication_audit",
+            attempts,
+            publication: auditedPublication,
+            persistence,
+            verifiedResultPreserved: true,
+            memoryMayLearn: false,
+            memoryUpdate: null,
+            finishedAt: now()
+          };
+        }
         workerVerified = true;
         current = applyTransition(current, "verifying", "Worker verification passed; persisting Task Capsule evidence");
         persistence = await persistWithRetry(() => persistOutcome({ job: current, outcome: lastOutcome }));
         if (persistence.ok === true) {
+          const memoryEligibility = evaluateMemoryEligibility(lastOutcome);
           current = replaceJob({
             ...current,
             result: resultForJob(lastOutcome),
@@ -68,8 +101,9 @@ export function createAutonomousRunner({
             attempts,
             result: resultForJob(lastOutcome),
             persistence,
-            memoryMayLearn: lastOutcome.memoryUpdate?.learn === true,
-            memoryUpdate: lastOutcome.memoryUpdate?.learn === true ? lastOutcome.memoryUpdate : null,
+            memoryMayLearn: memoryEligibility.eligible,
+            memoryUpdate: memoryEligibility.eligible ? lastOutcome.memoryUpdate : null,
+            memoryEligibilityReasons: memoryEligibility.reasons,
             finishedAt: now()
           };
         }
@@ -115,6 +149,19 @@ export function createAutonomousRunner({
       : `Autonomous loop failed after ${attemptLimit} attempt(s)`;
     applyTransition(current, "failed", message);
     return { ok: false, stage: workerVerified ? "artifact_persistence" : "failed", attempts, persistence, memoryMayLearn: false, memoryUpdate: null, finishedAt: now() };
+  };
+}
+
+function publicationRecord(outcome, attempts, attemptedAt) {
+  const publish = outcome?.approval?.publish || {};
+  return {
+    status: publish.status === "draft_pr_created" ? "draft_pr_created" : "failed",
+    attemptedAt,
+    attempts,
+    draftPullRequest: publish.draftPullRequest || null,
+    errors: (outcome?.errors || []).slice(0, 20),
+    mergePerformed: false,
+    verifiedResultPreserved: true
   };
 }
 
@@ -168,7 +215,9 @@ export function buildHttpDispatch(env = {}, { fetchImpl = fetch, tokenIssuer = i
 
 function workerPayload(job, input, attempt, loadJob = getJob) {
   const parent = job.context?.parentJobId ? loadJob(job.context.parentJobId) : null;
+  const replaySource = job.replay?.sourceJobId ? loadJob(job.replay.sourceJobId) : null;
   const followUp = verifiedFollowUpContext(job, parent);
+  const replayPlan = verifiedReplayPlan(job, replaySource);
   const publishDraftPr = isDraftPublishAuthorized(job, input);
   return {
     jobId: job.id,
@@ -180,18 +229,39 @@ function workerPayload(job, input, attempt, loadJob = getJob) {
     files: [],
     edits: [],
     commands: [],
-    modelMode: publishDraftPr ? "disabled" : "enabled",
+    modelMode: publishDraftPr || replayPlan ? "disabled" : "enabled",
     ...(publishDraftPr ? { approvedDiff: job.result.diff } : {}),
     taskCapsule: job.taskCapsule,
     preview: job.preview || { required: false },
     verification: {},
+    executionMode: job.executionMode || "edit",
     approval: {
       createDraftPr: publishDraftPr,
       approvedDiffSha256: publishDraftPr ? job.approval.approvedDiffSha256 : null
     },
     maxIterations: 25,
-    followUpContext: followUp
+    followUpContext: followUp,
+    replayPlan
   };
+}
+
+function verifiedReplayPlan(job, source) {
+  if (job.replay?.deterministic !== true) return null;
+  if (!source || source.status !== "passed" || !source.result?.actionLog) throw new Error("deterministic_replay_source_unavailable");
+  const expectedHash = String(job.replay.sourceActionLogSha256 || "");
+  if (!/^[a-f0-9]{64}$/.test(expectedHash)
+    || source.result.actionLogSha256 !== expectedHash
+    || sha256(JSON.stringify(source.result.actionLog)) !== expectedHash) {
+    throw new Error("deterministic_replay_action_log_mismatch");
+  }
+  const sameTask = source.task === job.task;
+  const sameMode = source.executionMode === job.executionMode;
+  const sameRepository = source.repository?.url === job.repository?.url
+    && source.repository?.baseRef === job.repository?.baseRef;
+  if (!sameTask || !sameMode || !sameRepository || source.userId !== job.userId) {
+    throw new Error("deterministic_replay_scope_mismatch");
+  }
+  return { actionLog: source.result.actionLog, actionLogSha256: expectedHash };
 }
 
 function isDraftPublishAuthorized(job, input) {
@@ -243,9 +313,16 @@ function resultForJob(outcome) {
   return {
     ok: outcome.ok === true,
     status: outcome.status || (outcome.ok ? "verified" : "failed"),
+    executionMode: outcome.executionMode || "edit",
     diff: String(outcome.diff || "").slice(0, 1_000_000),
     diffSha256: outcome.diffSha256 || null,
+    changeSet: outcome.changeSet || null,
     repository: outcome.repository || null,
+    analysis: outcome.analysis || null,
+    actionLog: outcome.actionLog || null,
+    actionLogSha256: outcome.actionLogSha256 || null,
+    replay: outcome.replay || null,
+    workerRuntime: outcome.workerRuntime || null,
     verification: outcome.verification || null,
     browser: outcome.browser ? { ...outcome.browser, screenshots: (outcome.browser.screenshots || []).map((item) => ({ name: item.name })) } : null,
     approval: outcome.approval || null,

@@ -10,11 +10,13 @@ const REQUIRED_TASK_FILES = [
   "browserResults",
   "errors",
   "selfFixAttempts",
+  "actionLog",
   "verificationGates",
   "benchmarkResults",
   "verifierReport",
   "finalReport",
   "memoryUpdate",
+  "trainingEligibility",
   "rollbackManifest"
 ];
 
@@ -34,6 +36,7 @@ export function buildTaskCapsuleWritePlan(job, { now = new Date().toISOString(),
       projectId: job.projectId,
       userId: job.userId || "",
       task: job.task || "",
+      executionMode: job.executionMode || "edit",
       repository: job.repository || null,
       context: job.context || { parentJobId: "", followUp: false },
       preview: job.preview || { required: false },
@@ -125,6 +128,14 @@ export function buildTaskCapsuleWritePlan(job, { now = new Date().toISOString(),
       stopWhen: "verification_passed_or_attempt_cap_reached",
       createdAt: now
     }),
+    jsonObject(capsule.actionLog, {
+      schemaVersion: 1,
+      jobId: job.id,
+      status: "pending",
+      deterministicReplayReady: false,
+      actions: [],
+      createdAt: now
+    }),
     jsonObject(capsule.verificationGates, {
       version: 1,
       jobId: job.id,
@@ -145,6 +156,22 @@ export function buildTaskCapsuleWritePlan(job, { now = new Date().toISOString(),
       learn: false,
       learnOnlyWhen: "verification_passed",
       sourceCapsule: capsule.rootPrefix,
+      createdAt: now
+    }),
+    jsonObject(capsule.trainingEligibility, {
+      schemaVersion: 1,
+      jobId: job.id,
+      trainingEligible: false,
+      state: "not-evaluated",
+      automaticPromotionAllowed: false,
+      operationalMemoryIsTrainingPermission: false,
+      reasons: [
+        "explicit-consent-not-evaluated",
+        "provider-rights-not-evaluated",
+        "privacy-filter-not-run",
+        "quality-promotion-gate-not-run"
+      ],
+      trainingPipeline: "separate-encrypted-fail-closed",
       createdAt: now
     }),
     jsonObject(capsule.rollbackManifest, {

@@ -14,7 +14,11 @@ const USER_PROTECTED_EXACT_PATHS = new Set([
   ROUTES.api.fileWrite,
   ROUTES.api.gitStatus,
   ROUTES.api.gitCommit,
-  ROUTES.api.storagePresign
+  ROUTES.api.storagePresign,
+  ROUTES.api.saladStatus,
+  ROUTES.api.trainingConsent,
+  ROUTES.api.trainingConsentDecision,
+  ROUTES.api.trainingConsentRevoke
 ]);
 
 const USER_PROTECTED_MUTATIONS = new Set([

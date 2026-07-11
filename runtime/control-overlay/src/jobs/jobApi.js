@@ -25,7 +25,9 @@ export function createStorageFirstJobEnvelope({ body = {}, env = {}, now = new D
     limits: body.limits || {},
     repository,
     parentJobId: body.parentJobId || "",
-    preview: normalizePreview(body.preview || {}, body.uiChange === true)
+    preview: normalizePreview(body.preview || {}, body.uiChange === true),
+    executionMode: normalizeExecutionMode(body.executionMode || body.mode),
+    replay: normalizeReplay(body.replay || {})
   });
 
   const idriveConfigured = hasIdriveConfig(env);
@@ -81,6 +83,26 @@ export function createStorageFirstJobEnvelope({ body = {}, env = {}, now = new D
   };
 }
 
+export function normalizeExecutionMode(value) {
+  return String(value || "").toLowerCase() === "analyze" ? "analyze" : "edit";
+}
+
+export function normalizeReplay(value = {}) {
+  const sourceJobId = String(value.sourceJobId || "").trim();
+  if (sourceJobId && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,120}$/.test(sourceJobId)) {
+    throw new Error("replay sourceJobId is invalid");
+  }
+  const sourceActionLogSha256 = String(value.sourceActionLogSha256 || "").trim().toLowerCase();
+  if (sourceActionLogSha256 && !/^[a-f0-9]{64}$/.test(sourceActionLogSha256)) {
+    throw new Error("replay sourceActionLogSha256 is invalid");
+  }
+  return {
+    deterministic: value.deterministic === true,
+    sourceJobId,
+    sourceActionLogSha256
+  };
+}
+
 export function normalizeRepositoryDescriptor(value = {}) {
   const url = String(value.url || "").trim();
   if (!url) return null;
@@ -98,7 +120,8 @@ export function normalizeRepositoryDescriptor(value = {}) {
   return {
     url: `${parsed.origin}${parsed.pathname}`,
     baseRef,
-    publishMode: value.publishMode === "draft-pr" ? "draft-pr" : "diff-only"
+    publishMode: value.publishMode === "draft-pr" ? "draft-pr" : "diff-only",
+    visibility: value.visibility === "private" || value.private === true ? "private" : "public"
   };
 }
 

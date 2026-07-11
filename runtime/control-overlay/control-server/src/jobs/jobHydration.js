@@ -20,12 +20,14 @@ export async function hydrateJobFromIdrive(jobId, { env = process.env, getObject
     if (!safeRoot(root, jobId)) return null;
     const input = parse(await reader(`${root}input.json`));
     const status = parse(await reader(`${root}status.json`));
-    const [diff, finalReport, repository, approval, budget] = await Promise.all([
+    const [diff, finalReport, repository, approval, budget, actionLog, changeSet] = await Promise.all([
       optionalText(reader, `${root}patch.diff`),
       optionalText(reader, `${root}final-report.md`),
       optionalJson(reader, `${root}repository.json`),
       optionalJson(reader, `${root}approval.json`),
-      optionalJson(reader, `${root}budget.json`)
+      optionalJson(reader, `${root}budget.json`),
+      optionalJson(reader, `${root}action-log.json`),
+      optionalJson(reader, `${root}change-set.json`)
     ]);
     const job = createIdriveLiteCodingJob({
       jobId,
@@ -37,7 +39,9 @@ export async function hydrateJobFromIdrive(jobId, { env = process.env, getObject
       repository: input.repository || null,
       parentJobId: input.context?.parentJobId || "",
       preview: input.preview || { required: false },
-      contextPaths: input.contextPaths || {}
+      contextPaths: input.contextPaths || {},
+      executionMode: input.executionMode || "edit",
+      replay: input.replay || null
     });
     if (job.taskCapsule.rootPrefix !== root) return null;
     const durableStatus = DURABLE_STATUSES.has(status.status) ? status.status : "queued";
@@ -60,7 +64,10 @@ export async function hydrateJobFromIdrive(jobId, { env = process.env, getObject
           status: durableStatus,
           diff,
           diffSha256: queue.diffSha256 || null,
+          changeSet: changeSet?.schemaVersion === 1 ? changeSet : null,
           repository: repository || null,
+          actionLog: actionLog?.status === "ready" ? actionLog.plan : null,
+          actionLogSha256: actionLog?.actionLogSha256 || null,
           finalReport
         }
       } : {})

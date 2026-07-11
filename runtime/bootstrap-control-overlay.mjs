@@ -10,6 +10,7 @@ const FILES = [
   "public/search.js",
   "public/auth/passkey-ui.js",
   "src/server.js",
+  "src/shared/env.js",
   "src/shared/platform.js",
   "src/shared/modelRegistry.js",
   "src/shared/controlAccessPolicy.js",
@@ -22,6 +23,9 @@ const FILES = [
   "control-server/src/auth/workerToken.js",
   "control-server/src/auth/sessionToken.js",
   "control-server/src/auth/sessionHandoff.js",
+  "control-server/src/budget/runtimeWatchdog.js",
+  "control-server/src/budget/watchdogLeaseStore.js",
+  "control-server/src/http/respond.js",
   "control-server/src/jobs/jobStore.js",
   "control-server/src/jobs/memoryEligibility.js",
   "control-server/src/jobs/jobArtifacts.js",
@@ -32,6 +36,7 @@ const FILES = [
   "control-server/src/orchestrator/jobScheduler.js",
   "control-server/src/routes/jobRoutes.js",
   "control-server/src/routes/passkeyRoutes.js",
+  "control-server/src/routes/saladRoutes.js",
   "control-server/src/routes/workerModelRoutes.js",
   "control-server/src/storage/s3Signer.js"
 ];

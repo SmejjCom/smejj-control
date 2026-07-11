@@ -7,7 +7,6 @@ import crypto from "node:crypto";
 import { APP_INFO, CAPABILITIES, COST_POLICY, ROUTES, SECURITY_HEADERS, STORAGE } from "./shared/platform.js";
 import { SECURITY_LIMITS } from "./shared/securityPolicy.js";
 import { json, readJson } from "../control-server/src/http/respond.js";
-import { hmac } from "../control-server/src/shared/hash.js";
 import { parseS3Keys, signedS3List } from "../control-server/src/storage/s3Signer.js";
 import {
   handleApproveJob,
@@ -21,7 +20,9 @@ import {
   handleListJobs,
   handleWorkerStatusUpdate
 } from "../control-server/src/routes/jobRoutes.js";
-import { handleSaladCreate, handleSaladGpuClasses, handleSaladPlan, handleSaladStart, handleSaladStatus, handleSaladStop } from "../control-server/src/routes/saladRoutes.js";
+import { handleSaladCreate, handleSaladGpuClasses, handleSaladPlan, handleSaladStart, handleSaladStatus, handleSaladStop, recoverRuntimeWatchdogFromIdrive } from "../control-server/src/routes/saladRoutes.js";
+import { recoverEphemeralWorkersFromIdrive } from "../control-server/src/orchestrator/ephemeralWorker.js";
+import { verifyEphemeralRuntimeAttestation } from "../control-server/src/orchestrator/ephemeralRuntimeAttestation.js";
 import { handleStoragePresign } from "../control-server/src/routes/storagePresignRoutes.js";
 import { handleBrowserFetch } from "../control-server/src/routes/browserProxyRoutes.js";
 import { handleBrowserRemote } from "../control-server/src/routes/browserRemoteRoutes.js";
@@ -38,12 +39,14 @@ import { pipeVisibleModelStream } from "../control-server/src/llm/streamFilter.j
 import { allowedOriginsFromEnv, corsHeadersFor, handlePreflight } from "../control-server/src/http/cors.js";
 import { installCrashGuard } from "../control-server/src/http/crashGuard.js";
 import { createStaticHandlers } from "./http/staticServing.js";
-import { loadDotEnv, normalizeSecret } from "./shared/env.js";
+import { loadSecureLocalEnv, normalizeSecret } from "./shared/env.js";
 import { resolveTerminalCommand } from "./shared/terminalPolicy.js";
 import { isSafeMutatingControlRequest, requiresAuthenticatedControlAccess } from "./shared/controlAccessPolicy.js";
 import { createPublicModelRateGate } from "./shared/modelRatePolicy.js";
 import { bearerSessionToken, issueSessionToken, verifySessionToken } from "../control-server/src/auth/sessionToken.js";
 import { createSessionHandoffStore, isSessionHandoffId } from "../control-server/src/auth/sessionHandoff.js";
+import { handleTrainingConsentRoute } from "../control-server/src/routes/trainingConsentRoutes.js";
+import { signGoogleAuthState, verifyGoogleAuthState, verifyGoogleIdToken } from "./auth/googleAuth.js";
 
 installCrashGuard(); // kein stiller Tod: unbehandelte Fehler -> Log mit Stack + Exit 1 (Probes uebernehmen)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -58,8 +61,7 @@ const { isAppRoute, isPublicAsset, serveAiModule, serveFile, serveSharedModule, 
   sharedSourceDir
 });
 
-loadDotEnv(path.resolve(process.cwd(), ".env.local"));
-loadDotEnv(path.resolve(process.cwd(), ".env"));
+loadSecureLocalEnv();
 
 const config = {
   port: Number(process.env.PORT || 3000),
@@ -85,6 +87,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (!isSafeMutatingControlRequest(req, url)) return json(res, 403, { error: "Origin not allowed" });
     if (requiresAuthenticatedControlAccess(req, url)) {
+      res.setHeader("Cache-Control", "private, no-store");
       const authenticatedUser = readSession(req);
       if (!authenticatedUser) return json(res, 401, { ok: false, error: "authentication_required" });
       req.authUser = authenticatedUser;
@@ -144,6 +147,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === ROUTES.api.gitCommit) return await handleGitCommit(req, res);
     if (req.method === "POST" && url.pathname === ROUTES.api.storagePresign) return await handleStoragePresign(req, res);
     if (readMethod && url.pathname === ROUTES.api.storageStatus) return await handleStorageStatus(res);
+    if (url.pathname.startsWith(ROUTES.api.trainingConsent)) return await handleTrainingConsentRoute(req, url, res);
     if (readMethod && url.pathname === ROUTES.api.modelStatus) return await handleModelStatus(res, "kimi-k2-7");
     if (readMethod && url.pathname === ROUTES.api.glmModelStatus) return await handleModelStatus(res, "glm-5-2");
     if (readMethod && url.pathname === ROUTES.api.modelsStatus) return await handleModelsStatus(res);
@@ -158,15 +162,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === ROUTES.api.saladStart) return await handleSaladStart(res);
     if (req.method === "POST" && url.pathname === ROUTES.api.saladStop) return await handleSaladStop(res);
     if (req.method === "POST" && url.pathname === ROUTES.api.jobs) return await handleCreateJob(req, res);
-    if (readMethod && url.pathname === ROUTES.api.jobs) return await handleListJobs(url, res);
-    if (readMethod && url.pathname === ROUTES.api.jobQueue) return handleJobQueue(res);
+    if (readMethod && url.pathname === ROUTES.api.jobs) return await handleListJobs(url, res, { authUser: req.authUser });
+    if (readMethod && url.pathname === ROUTES.api.jobQueue) return handleJobQueue(res, { authUser: req.authUser });
     if (req.method === "POST" && url.pathname === ROUTES.api.freeExecutor) return await handleFreeExecutor(req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/status")) return await handleWorkerStatusUpdate(url, req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/cancel")) return await handleCancelJob(url, req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/approve")) return await handleApproveJob(url, req, res);
     if (req.method === "POST" && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/autonomous-run")) return await handleAutonomousRun(url, req, res);
     if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`) && url.pathname.endsWith("/events")) return await handleJobEvents(url, req, res);
-    if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`)) return await handleJobStatus(url, res);
+    if (readMethod && url.pathname.startsWith(`${ROUTES.api.jobs}/`)) return await handleJobStatus(url, res, { authUser: req.authUser });
     if (readMethod && isAppRoute(url.pathname)) return serveFile(res, "index.html");
     json(res, 404, { error: "Not found" });
   } catch (error) {
@@ -176,6 +180,22 @@ const server = http.createServer(async (req, res) => {
 
 // HOST bleibt lokal 127.0.0.1 (sicher); Container/Salad setzen SMEJJ_HOST=0.0.0.0.
 const listenHost = process.env.SMEJJ_HOST || "127.0.0.1";
+if (process.env.SMEJJ_EPHEMERAL_WORKER_ENABLED === "YES" && process.env.SMEJJ_SALAD_WATCHDOG_RECOVERY_ENABLED !== "YES") {
+  throw new Error("ephemeral_worker_requires_watchdog_recovery");
+}
+if (process.env.SMEJJ_SALAD_WATCHDOG_RECOVERY_ENABLED === "YES") {
+  await recoverRuntimeWatchdogFromIdrive();
+  if (process.env.SMEJJ_EPHEMERAL_WORKER_ENABLED === "YES") {
+    const runtime = await verifyEphemeralRuntimeAttestation({ env: process.env });
+    if (runtime.ok !== true) {
+      throw new Error(`ephemeral_runtime_attestation_failed:${runtime.reason || "unverified_runtime"}`);
+    }
+  }
+  const recovered = await recoverEphemeralWorkersFromIdrive({ env: process.env });
+  if (recovered.ok !== true || recovered.workerSafe !== true) {
+    throw new Error(`ephemeral_worker_recovery_failed:${recovered.reason || "unsafe_worker_state"}`);
+  }
+}
 server.listen(config.port, listenHost, () => {
   console.log(`smejj.com Code MVP: http://${listenHost}:${config.port}`);
   console.log(`Sandbox: ${config.projectRoot}`);
@@ -298,8 +318,11 @@ async function handleGoogleAuth(req, res) {
   if (!config.googleClientId) return json(res, 503, { error: "Google Login ist noch nicht konfiguriert." });
   if (!config.sessionSecret) return json(res, 503, { error: "Session Secret fehlt." });
   const body = await readAuthBody(req);
-  const state = body.state ? verifyGoogleAuthState(String(body.state)) : null;
-  const payload = await verifyGoogleIdToken(String(body.credential || body.idToken || ""), state?.nonce);
+  const state = body.state ? verifyGoogleAuthState(String(body.state), config.sessionSecret) : null;
+  const payload = await verifyGoogleIdToken(String(body.credential || body.idToken || ""), {
+    clientId: config.googleClientId,
+    expectedNonce: state?.nonce
+  });
   const email = String(payload.email || "").toLowerCase();
   if (!payload.email_verified) return json(res, 403, { error: "Google E-Mail ist nicht verifiziert." });
   if (config.googleAllowedEmail && email !== config.googleAllowedEmail) {
@@ -333,7 +356,7 @@ async function handleGoogleAuthStart(req, res, url) {
     nonce,
     returnTo: "/profile?google=ok",
     exp: Date.now() + 10 * 60 * 1000
-  });
+  }, config.sessionSecret);
   const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authUrl.searchParams.set("client_id", config.googleClientId);
   authUrl.searchParams.set("redirect_uri", `${origin}${ROUTES.api.authGoogle}`);
@@ -717,36 +740,6 @@ function readAuthBody(req) {
   });
 }
 
-async function verifyGoogleIdToken(token, expectedNonce = "") {
-  const [headerPart, payloadPart, signaturePart] = token.split(".");
-  if (!headerPart || !payloadPart || !signaturePart) throw new Error("Ungueltiges Google Token.");
-  const header = parseJwtPart(headerPart);
-  const payload = parseJwtPart(payloadPart);
-  if (header.alg !== "RS256" || !header.kid) throw new Error("Ungueltige Google Signatur.");
-  if (payload.aud !== config.googleClientId) throw new Error("Google Client-ID passt nicht.");
-  if (!["https://accounts.google.com", "accounts.google.com"].includes(payload.iss)) throw new Error("Ungueltiger Google Issuer.");
-  if (Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)) throw new Error("Google Token ist abgelaufen.");
-  if (expectedNonce && payload.nonce !== expectedNonce) throw new Error("Google Login Nonce passt nicht.");
-  const key = await getGooglePublicKey(header.kid);
-  const ok = crypto.verify(
-    "RSA-SHA256",
-    Buffer.from(`${headerPart}.${payloadPart}`),
-    key,
-    base64UrlDecode(signaturePart)
-  );
-  if (!ok) throw new Error("Google Signatur konnte nicht geprueft werden.");
-  return payload;
-}
-
-async function getGooglePublicKey(kid) {
-  const response = await fetch("https://www.googleapis.com/oauth2/v3/certs");
-  if (!response.ok) throw new Error("Google Zertifikate konnten nicht geladen werden.");
-  const { keys = [] } = await response.json();
-  const jwk = keys.find((key) => key.kid === kid);
-  if (!jwk) throw new Error("Passendes Google Zertifikat fehlt.");
-  return crypto.createPublicKey({ key: jwk, format: "jwk" });
-}
-
 function serializeSessionCookie(user) {
   return `smejj_session=${serializeSessionToken(user)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800`;
 }
@@ -755,37 +748,8 @@ function serializeSessionToken(user) {
   return issueSessionToken({ secret: config.sessionSecret, user });
 }
 
-function signGoogleAuthState(data) {
-  const payload = base64UrlEncode(JSON.stringify(data));
-  const signature = hmac(config.sessionSecret, payload, "base64url");
-  return `${payload}.${signature}`;
-}
-
-function verifyGoogleAuthState(state) {
-  const [payload, signature] = state.split(".");
-  const expected = hmac(config.sessionSecret, payload || "", "base64url");
-  if (!payload || !signature || signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    throw new Error("Google Login State ist ungueltig.");
-  }
-  const data = JSON.parse(base64UrlDecode(payload).toString("utf8"));
-  if (Number(data.exp || 0) <= Date.now()) throw new Error("Google Login State ist abgelaufen.");
-  return data;
-}
-
 function readSession(req) {
   const match = String(req.headers.cookie || "").match(/(?:^|;\s*)smejj_session=([^;]+)/);
   const token = bearerSessionToken(req.headers || {}) || match?.[1] || "";
   return verifySessionToken(token, { secret: config.sessionSecret });
-}
-
-function parseJwtPart(part) {
-  return JSON.parse(base64UrlDecode(part).toString("utf8"));
-}
-
-function base64UrlDecode(value) {
-  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-}
-
-function base64UrlEncode(value) {
-  return Buffer.from(value).toString("base64url");
 }

@@ -26,7 +26,9 @@ export function createIdriveLiteCodingJob({
   limits = {},
   repository = null,
   parentJobId = "",
-  preview = null
+  preview = null,
+  executionMode = "edit",
+  replay = null
 } = {}) {
   const safeJobId = normalizeId(jobId, "jobId");
   const safeProjectId = normalizeId(projectId, "projectId");
@@ -47,6 +49,7 @@ export function createIdriveLiteCodingJob({
     projectId: safeProjectId,
     task: taskText,
     repository,
+    executionMode: executionMode === "analyze" ? "analyze" : "edit",
     context: {
       parentJobId: parentJobId ? normalizeId(parentJobId, "parentJobId") : "",
       followUp: Boolean(parentJobId)
@@ -90,7 +93,10 @@ export function createIdriveLiteCodingJob({
       input: capsule.input,
       repoSnapshotHash: contextPaths.repoSnapshotHash || null,
       selectedContextHash: contextPaths.selectedContextHash || null,
-      modelId: modelDefinition.id
+      modelId: modelDefinition.id,
+      deterministic: replay?.deterministic === true,
+      sourceJobId: replay?.sourceJobId || "",
+      sourceActionLogSha256: replay?.sourceActionLogSha256 || ""
     }
   };
 }
@@ -168,11 +174,13 @@ function buildTaskCapsule(jobId, projectId, modelId, createdAt) {
     browserVideo: `${rootPrefix}browser-video/`,
     errors: `${rootPrefix}errors.json`,
     selfFixAttempts: `${rootPrefix}self-fix-attempts.json`,
+    actionLog: `${rootPrefix}action-log.json`,
     verifierReport: `${rootPrefix}verifier-report.md`,
     verificationGates: `${rootPrefix}verification-gates.json`,
     benchmarkResults: `${rootPrefix}benchmark-results.json`,
     finalReport: `${rootPrefix}final-report.md`,
     memoryUpdate: `${rootPrefix}memory-update.json`,
+    trainingEligibility: `${rootPrefix}training-eligibility.json`,
     rollbackManifest: `${rootPrefix}rollback-manifest.json`,
     eventsPrefix: `${rootPrefix}events/`,
     events: [

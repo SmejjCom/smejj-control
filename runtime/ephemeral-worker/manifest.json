@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "path": "smejj-worker/allowlist.mjs",
+      "sha256": "c37fff6011314bc000c56606d3478b6b400fb29025d42661f0f0cf0f11f5af89"
+    },
+    {
+      "path": "smejj-worker/path-policy.mjs",
+      "sha256": "ee4469e4e771ab671ce5335a7bdd1f4fb850aadc26baf1a6ffdbc9f0fb3a7c82"
+    },
+    {
+      "path": "smejj-worker/safe-search.mjs",
+      "sha256": "14307f875926c1dbcea9983df1f102cceca10a7b9b16ef701add1b02c269fb16"
+    },
+    {
+      "path": "smejj-worker/sandbox.mjs",
+      "sha256": "170510882a732b5757687950e74201df87c9e5dbc33047baa29ca2533853c4db"
+    },
+    {
+      "path": "smejj-worker/repository.mjs",
+      "sha256": "43cb98f4bdab31383a17341a0c82fff3720580184c68fbe3ece893e219458971"
+    },
+    {
+      "path": "smejj-worker/verification.mjs",
+      "sha256": "58e0b0559a9a1b99475cf34d4abb64234ff9d333394dfe31fbf2771d634f3311"
+    },
+    {
+      "path": "smejj-worker/model-client.mjs",
+      "sha256": "e22006c0fcea604d55fe6ea75f99bfaeef41a41be6055ee18ad8759f421463ff"
+    },
+    {
+      "path": "smejj-worker/browser-verification.mjs",
+      "sha256": "9b5f8c5565ddf014b05e6884dda5e0a7608891d490a5e814690f9dacb3d984ad"
+    },
+    {
+      "path": "smejj-worker/publish.mjs",
+      "sha256": "fd420e7037ea07c2655d1b4826f7944ba0a5d2b068d667c59464f04f08f61ea3"
+    },
+    {
+      "path": "smejj-worker/role-registry.mjs",
+      "sha256": "d278edd46f1eea6e8a86bfe24ff108a281124de96c8ddc03c38db125f25a6bfc"
+    },
+    {
+      "path": "smejj-worker/agentloop.mjs",
+      "sha256": "62ee3ddfc79fbe00c21e0428e8a6232d0bd2478f49b402a913da82d2c15d0ada"
+    },
+    {
+      "path": "smejj-worker/worker.mjs",
+      "sha256": "a280e5e1177e1577ae7944c32334615063baf7bd6341e632ddf9f2f7f69d5cea"
+    }
+  ]
+}
