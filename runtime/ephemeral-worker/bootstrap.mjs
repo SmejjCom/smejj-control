@@ -9,14 +9,19 @@ const execFile = promisify(execFileCallback);
 const MAX_FILE_BYTES = 1_000_000;
 const MAX_MANIFEST_BYTES = 100_000;
 const EXPECTED_NODE = "v20.15.1";
-const EXPECTED_PYTHON = "Python 3.10.12";
+const EXPECTED_GIT = "git version 2.45.4";
+const EXPECTED_PYTHON = "Python 3.12.13";
 const EXPECTED_PYTEST = "8.3.5";
-const EXPECTED_PLAYWRIGHT = "1.45.3";
+const EXPECTED_PLAYWRIGHT = "1.49.1";
+const EXPECTED_BROWSER = "Chromium 131.0.6778.108 Alpine Linux";
+const BROWSER_NOT_REQUIRED = "not-required";
 export const EPHEMERAL_RUNTIME_VERSIONS = Object.freeze({
   node: EXPECTED_NODE,
+  git: EXPECTED_GIT,
   python: EXPECTED_PYTHON,
   pytest: EXPECTED_PYTEST,
-  playwright: EXPECTED_PLAYWRIGHT
+  playwright: EXPECTED_PLAYWRIGHT,
+  browser: EXPECTED_BROWSER
 });
 
 export async function startEphemeralWorker({
@@ -29,6 +34,7 @@ export async function startEphemeralWorker({
   dropPrivileges = dropRuntimePrivileges
 } = {}) {
   appRoot = validateEphemeralAppRoot(appRoot);
+  const browserRequired = env.SMEJJ_WORKER_BROWSER_REQUIRED === "YES";
   const sourceBase = validateSourceBase(env.SMEJJ_EPHEMERAL_WORKER_SOURCE_BASE);
   const expectedManifestSha256 = requiredSha256(env.SMEJJ_EPHEMERAL_WORKER_MANIFEST_SHA256, "ephemeral_worker_manifest_sha256_required");
   assertRuntimeVersion(nodeVersion, EXPECTED_NODE, "node_runtime_version_mismatch");
@@ -54,18 +60,31 @@ export async function startEphemeralWorker({
     dependencies: { playwright: EXPECTED_PLAYWRIGHT }
   }, null, 2)}\n`, "utf8");
 
-  const commands = runtimeInstallCommands(appRoot);
+  const commands = runtimeInstallCommands(appRoot, { browserRequired });
   for (const command of commands) await runCommand(command.file, command.args, { env });
+  const gitVersion = String((await runCommand("git", ["--version"], { env })).stdout || "").trim();
+  assertRuntimeVersion(gitVersion, EXPECTED_GIT, "git_runtime_version_mismatch");
   const pythonVersion = String((await runCommand("python3", ["--version"], { env })).stdout || "").trim();
   assertRuntimeVersion(pythonVersion, EXPECTED_PYTHON, "python_runtime_version_mismatch");
   const pytestVersion = String((await runCommand("python3", ["-m", "pytest", "--version"], { env })).stdout || "").trim();
   if (!pytestVersion.startsWith(`pytest ${EXPECTED_PYTEST}`)) throw new Error("pytest_runtime_version_mismatch");
   const playwrightPackage = JSON.parse(await readFile(path.join(appRoot, "node_modules/playwright/package.json"), "utf8"));
   if (playwrightPackage.version !== EXPECTED_PLAYWRIGHT) throw new Error("playwright_runtime_version_mismatch");
+  let browserVersion = BROWSER_NOT_REQUIRED;
+  if (browserRequired) {
+    browserVersion = String((await runCommand("chromium-browser", ["--version"], { env })).stdout || "").trim();
+    assertRuntimeVersion(browserVersion, EXPECTED_BROWSER, "browser_runtime_version_mismatch");
+    process.env.SMEJJ_PLAYWRIGHT_CHROMIUM_EXECUTABLE = "/usr/bin/chromium-browser";
+  } else {
+    delete process.env.SMEJJ_PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+  }
   process.env.SMEJJ_RUNTIME_NODE_VERSION = EXPECTED_NODE;
+  process.env.SMEJJ_RUNTIME_GIT_VERSION = EXPECTED_GIT;
   process.env.SMEJJ_RUNTIME_PYTHON_VERSION = EXPECTED_PYTHON;
   process.env.SMEJJ_RUNTIME_PYTEST_VERSION = EXPECTED_PYTEST;
   process.env.SMEJJ_RUNTIME_PLAYWRIGHT_VERSION = EXPECTED_PLAYWRIGHT;
+  process.env.SMEJJ_RUNTIME_BROWSER_VERSION = browserVersion;
+  process.env.SMEJJ_RUNTIME_PROFILE = browserRequired ? "browser" : "coding";
   await dropPrivileges();
 
   const worker = await importModule(`file://${path.join(appRoot, "smejj-worker/worker.mjs")}`);
@@ -76,15 +95,17 @@ export async function startEphemeralWorker({
   });
 }
 
-export function runtimeInstallCommands(appRoot = "/app") {
+export function runtimeInstallCommands(appRoot = "/app", { browserRequired = false } = {}) {
+  const packages = [
+    "git=2.45.4-r0",
+    "python3=3.12.13-r0",
+    "py3-pip=24.0-r2",
+    ...(browserRequired ? ["chromium=131.0.6778.108-r0"] : [])
+  ];
   return [
     {
-      file: "apt-get",
-      args: ["update", "-qq"]
-    },
-    {
-      file: "apt-get",
-      args: ["install", "-y", "--no-install-recommends", "python3-pip"]
+      file: "apk",
+      args: ["add", "--no-cache", ...packages]
     },
     {
       file: "npm",
@@ -93,7 +114,7 @@ export function runtimeInstallCommands(appRoot = "/app") {
     {
       file: "python3",
       args: [
-        "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check",
+        "-m", "pip", "install", "--break-system-packages", "--no-cache-dir", "--disable-pip-version-check",
         `pytest==${EXPECTED_PYTEST}`,
         "iniconfig==2.0.0",
         "packaging==24.2",
@@ -124,9 +145,9 @@ export function dropRuntimePrivileges({ uid = 1000, gid = 1000 } = {}) {
   if (process.getuid() !== uid || (typeof process.getgid === "function" && process.getgid() !== gid)) {
     throw new Error("runtime_privilege_drop_failed");
   }
-  process.env.HOME = "/home/pwuser";
-  process.env.USER = "pwuser";
-  process.env.LOGNAME = "pwuser";
+  process.env.HOME = "/home/node";
+  process.env.USER = "node";
+  process.env.LOGNAME = "node";
   return { uid, gid, privileged: false };
 }
 
@@ -168,7 +189,6 @@ async function runRuntimeCommand(file, args, { env = process.env } = {}) {
     env: {
       PATH: env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       HOME: "/tmp/smejj.com-bootstrap-home",
-      DEBIAN_FRONTEND: "noninteractive",
       PIP_DISABLE_PIP_VERSION_CHECK: "1",
       npm_config_audit: "false",
       npm_config_fund: "false"

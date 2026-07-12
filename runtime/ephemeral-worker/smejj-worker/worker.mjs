@@ -22,9 +22,12 @@ export function createServer() {
           privileged: typeof process.getuid === "function" ? process.getuid() === 0 : null,
           runtime: {
             node: process.version,
+            git: process.env.SMEJJ_RUNTIME_GIT_VERSION || "unverified",
             python: process.env.SMEJJ_RUNTIME_PYTHON_VERSION || "unverified",
             pytest: process.env.SMEJJ_RUNTIME_PYTEST_VERSION || "unverified",
-            playwright: process.env.SMEJJ_RUNTIME_PLAYWRIGHT_VERSION || "unverified"
+            playwright: process.env.SMEJJ_RUNTIME_PLAYWRIGHT_VERSION || "unverified",
+            browser: process.env.SMEJJ_RUNTIME_BROWSER_VERSION || "unverified",
+            profile: process.env.SMEJJ_RUNTIME_PROFILE || "unverified"
           },
           secretsExposed: false
         });

@@ -22,7 +22,7 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
     return { required: true, ok: false, error: "playwright_runtime_missing", checks: [], screenshots: [] };
   }
 
-  const browser = await playwright.chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+  const browser = await playwright.chromium.launch(browserLaunchOptions());
   const checks = [];
   const screenshots = [];
   const networkSafety = new Map();
@@ -67,6 +67,17 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
     await browser.close();
   }
   return { required: true, ok: checks.every((check) => check.ok), url, checks, screenshots };
+}
+
+function browserLaunchOptions() {
+  const executablePath = process.env.SMEJJ_PLAYWRIGHT_CHROMIUM_EXECUTABLE === "/usr/bin/chromium-browser"
+    ? "/usr/bin/chromium-browser"
+    : undefined;
+  return {
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-software-rasterizer"],
+    ...(executablePath ? { executablePath } : {})
+  };
 }
 
 async function runActions(page, actions) {

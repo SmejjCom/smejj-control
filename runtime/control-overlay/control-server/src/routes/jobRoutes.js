@@ -632,10 +632,21 @@ function createClaimHeartbeat({ claims, job, lease, dispatch }) {
         if (inFlight) return;
         inFlight = true;
         try {
-          const renewed = await claims.heartbeat(job, lease);
+          const renewed = await renewJobClaimHeartbeat({ claims, job, lease });
           if (renewed.ok !== true) {
             clearInterval(timer);
             timer = null;
+            const current = getJob(job.id);
+            if (current) {
+              replaceJob({
+                ...current,
+                claimHeartbeatFailure: {
+                  reason: renewed.reason || "job_claim_heartbeat_failed",
+                  attempts: Number(renewed.attempts || 1),
+                  failedAt: new Date().toISOString()
+                }
+              }, { emitEvent: false });
+            }
             dispatch.cancel?.(job.id);
           } else {
             lease = renewed.lease;
@@ -652,3 +663,34 @@ function createClaimHeartbeat({ claims, job, lease, dispatch }) {
     }
   };
 }
+
+export async function renewJobClaimHeartbeat({
+  claims,
+  job,
+  lease,
+  attempts = 3,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+} = {}) {
+  const limit = Math.min(3, Math.max(1, Number(attempts) || 1));
+  let result = { ok: false, reason: "job_claim_heartbeat_failed" };
+  for (let attempt = 1; attempt <= limit; attempt += 1) {
+    try {
+      result = await claims.heartbeat(job, lease);
+    } catch {
+      result = { ok: false, reason: "job_claim_heartbeat_exception" };
+    }
+    if (result?.ok === true) return { ...result, attempts: attempt };
+    if (!TRANSIENT_CLAIM_HEARTBEAT_FAILURES.has(result?.reason) || attempt === limit) {
+      return { ...(result || {}), ok: false, attempts: attempt };
+    }
+    await sleep(250 * attempt);
+  }
+  return { ...result, ok: false, attempts: limit };
+}
+
+const TRANSIENT_CLAIM_HEARTBEAT_FAILURES = new Set([
+  "job_claim_head_read_failed",
+  "job_claim_head_write_failed",
+  "job_claim_readback_mismatch",
+  "job_claim_heartbeat_exception"
+]);
