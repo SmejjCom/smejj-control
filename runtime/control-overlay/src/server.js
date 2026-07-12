@@ -20,9 +20,8 @@ import {
   handleListJobs,
   handleWorkerStatusUpdate
 } from "../control-server/src/routes/jobRoutes.js";
-import { handleSaladCreate, handleSaladGpuClasses, handleSaladPlan, handleSaladStart, handleSaladStatus, handleSaladStop, recoverRuntimeWatchdogFromIdrive } from "../control-server/src/routes/saladRoutes.js";
-import { recoverEphemeralWorkersFromIdrive } from "../control-server/src/orchestrator/ephemeralWorker.js";
-import { verifyEphemeralRuntimeAttestation } from "../control-server/src/orchestrator/ephemeralRuntimeAttestation.js";
+import { handleSaladCreate, handleSaladGpuClasses, handleSaladPlan, handleSaladStart, handleSaladStatus, handleSaladStop } from "../control-server/src/routes/saladRoutes.js";
+import { recoverWorkerRuntimeOnStartup } from "../control-server/src/orchestrator/startupRecovery.js";
 import { handleStoragePresign } from "../control-server/src/routes/storagePresignRoutes.js";
 import { handleBrowserFetch } from "../control-server/src/routes/browserProxyRoutes.js";
 import { handleBrowserRemote } from "../control-server/src/routes/browserRemoteRoutes.js";
@@ -180,22 +179,7 @@ const server = http.createServer(async (req, res) => {
 
 // HOST bleibt lokal 127.0.0.1 (sicher); Container/Salad setzen SMEJJ_HOST=0.0.0.0.
 const listenHost = process.env.SMEJJ_HOST || "127.0.0.1";
-if (process.env.SMEJJ_EPHEMERAL_WORKER_ENABLED === "YES" && process.env.SMEJJ_SALAD_WATCHDOG_RECOVERY_ENABLED !== "YES") {
-  throw new Error("ephemeral_worker_requires_watchdog_recovery");
-}
-if (process.env.SMEJJ_SALAD_WATCHDOG_RECOVERY_ENABLED === "YES") {
-  await recoverRuntimeWatchdogFromIdrive();
-  if (process.env.SMEJJ_EPHEMERAL_WORKER_ENABLED === "YES") {
-    const runtime = await verifyEphemeralRuntimeAttestation({ env: process.env });
-    if (runtime.ok !== true) {
-      throw new Error(`ephemeral_runtime_attestation_failed:${runtime.reason || "unverified_runtime"}`);
-    }
-  }
-  const recovered = await recoverEphemeralWorkersFromIdrive({ env: process.env });
-  if (recovered.ok !== true || recovered.workerSafe !== true) {
-    throw new Error(`ephemeral_worker_recovery_failed:${recovered.reason || "unsafe_worker_state"}`);
-  }
-}
+await recoverWorkerRuntimeOnStartup({ env: process.env });
 server.listen(config.port, listenHost, () => {
   console.log(`smejj.com Code MVP: http://${listenHost}:${config.port}`);
   console.log(`Sandbox: ${config.projectRoot}`);

@@ -101,7 +101,9 @@ export async function runCodingJob(payload = {}, dependencies = {}) {
         const result = await executeTool(workspace.root, toolCall, repositorySummary.packageScripts, {
           signal,
           executionMode,
-          replayActions
+          replayActions,
+          browserCheck,
+          browserPreview: payload.preview || {}
         });
         iterations.push({ n: index, action: toolCall.name, detail: safeDetail(toolCall.arguments), usage: response.usage || null, ...result.log });
 
@@ -245,7 +247,9 @@ export async function runCodingJob(payload = {}, dependencies = {}) {
 async function executeTool(root, toolCall, allowedScripts, {
   signal = null,
   executionMode = "edit",
-  replayActions = []
+  replayActions = [],
+  browserCheck = runBrowserVerification,
+  browserPreview = {}
 } = {}) {
   throwIfAborted(signal);
   const args = toolCall.arguments;
@@ -269,6 +273,18 @@ async function executeTool(root, toolCall, allowedScripts, {
     return {
       modelResult: { ok: result.ok, command: result.command, code: result.code, stdout: cap(result.stdout), stderr: cap(result.stderr) },
       log: { command: result.command, code: result.code, ok: result.ok, stdout: cap(result.stdout), stderr: cap(result.stderr) }
+    };
+  }
+  if (toolCall.name === "browser_check") {
+    const evidence = await browserCheck(root, {
+      ...browserPreview,
+      required: true,
+      url: args.url,
+      actions: args.actions
+    }, { signal });
+    return {
+      modelResult: browserSummary(evidence),
+      log: { ok: evidence.ok, url: evidence.url, checkCount: evidence.checks?.length || 0 }
     };
   }
   if (toolCall.name === "finish") return { modelResult: { ok: true }, log: { ok: true, summary: String(args.summary || "").slice(0, 500) } };
@@ -315,11 +331,12 @@ function initialMessages(task, repositorySummary, previousErrors, followUpContex
 
 function normalizeToolCall(value = {}) {
   const name = String(value.name || "");
-  if (!new Set(["read_file", "write_file", "run_cmd", "finish"]).has(name)) throw new Error("model_tool_not_allowed");
+  if (!new Set(["read_file", "write_file", "run_cmd", "browser_check", "finish"]).has(name)) throw new Error("model_tool_not_allowed");
   const args = value.arguments && typeof value.arguments === "object" ? value.arguments : {};
   if ((name === "read_file" || name === "write_file") && !args.path) throw new Error("model_tool_path_missing");
   if (name === "write_file" && typeof args.content !== "string") throw new Error("model_tool_content_missing");
   if (name === "run_cmd" && !Array.isArray(args.command)) throw new Error("model_tool_command_invalid");
+  if (name === "browser_check" && !/^https:\/\//i.test(String(args.url || "")) && !/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])/i.test(String(args.url || ""))) throw new Error("model_tool_browser_url_invalid");
   return { id: String(value.id || `call_${crypto.randomUUID()}`), name, arguments: args };
 }
 

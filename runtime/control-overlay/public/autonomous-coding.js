@@ -22,7 +22,23 @@ export function initAutonomousCodingSurface() {
   bindSurface(surface);
   window.addEventListener("message", handleSessionHandoff);
   window.addEventListener("smejj:job-selected", (event) => selectJob(event.detail?.jobId));
+  window.addEventListener("smejj:autonomous-request", handleAutonomousRequest);
   refreshSession().catch(showError);
+}
+
+async function handleAutonomousRequest(event) {
+  const request = event.detail || {};
+  const task = String(request.task || "").trim();
+  if (!task) return;
+  text("#acTask", task);
+  document.querySelector("#acTask").value = task;
+  document.querySelector("#acUiChange").value = request.uiChange === true ? "true" : "false";
+  document.querySelector("#acPreviewUrl").value = String(request.previewUrl || "");
+  if (!sessionStorage.getItem(API_TOKEN_KEY)) {
+    setNotice("Aufgabe vorbereitet. Bitte sicher anmelden; danach kann der Lauf gestartet werden.");
+    return;
+  }
+  await createAndRun(request).catch(showError);
 }
 
 function surfaceMarkup() {
@@ -189,6 +205,7 @@ async function createAndRun(options = {}) {
     persistToIdrive: true,
     repository,
     parentJobId: options.parentJobId || "",
+    executionMode: options.executionMode === "analyze" ? "analyze" : "edit",
     uiChange,
     preview: { required: uiChange, ...(previewUrl ? { url: previewUrl } : {}) }
   };

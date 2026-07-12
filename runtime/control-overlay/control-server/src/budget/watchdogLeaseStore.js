@@ -423,8 +423,10 @@ function normalizeStopVerification(value) {
   const absentProof = providerAbsent === true && providerStatus === 404 && lifecycleState === "not-found";
   const stoppedProof = providerAbsent === false && providerStatus >= 200 && providerStatus <= 299 &&
     lifecycleState === "stopped";
+  const failedProof = providerAbsent === false && providerStatus >= 200 && providerStatus <= 299 &&
+    lifecycleState === "failed";
   if (value.verified !== true || typeof providerAbsent !== "boolean" || !statusValid || !activeValid ||
-      !configuredValid || (!absentProof && !stoppedProof)) return null;
+      !configuredValid || (!absentProof && !stoppedProof && !failedProof)) return null;
   return {
     verified: true,
     providerAbsent,

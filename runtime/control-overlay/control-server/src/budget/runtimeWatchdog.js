@@ -1,5 +1,5 @@
 // smejj.com control-server — durable Salad runtime watchdog.
-// A stop is complete only after Salad reports stopped with zero active instances.
+// A stop is complete only after Salad reports a terminal lifecycle state with zero active instances.
 
 export const STOP_RETRY_DELAYS_MS = Object.freeze([5_000, 15_000, 30_000, 60_000]);
 
@@ -34,7 +34,9 @@ export function evaluateContainerGroupStopped(result) {
   const countValues = INSTANCE_COUNT_KEYS.map((key) => nonNegativeInteger(counts?.[key]));
   const countsKnown = countValues.every((value) => value !== null);
   const activeReplicas = countsKnown ? countValues.reduce((total, value) => total + value, 0) : null;
-  const verified = responseOk && activeReplicas === 0 && lifecycleState === "stopped";
+  const verified = responseOk
+    && activeReplicas === 0
+    && new Set(["stopped", "failed"]).has(lifecycleState);
   return {
     verified,
     providerAbsent: false,
@@ -47,8 +49,9 @@ export function evaluateContainerGroupStopped(result) {
 
 /**
  * Creates one group-scoped watchdog. Leases must be durably persisted before
- * they can be armed. Stop retries remain active until Salad proves stopped and
- * all four active instance counters are zero. Configured replicas are advisory.
+ * they can be armed. Stop retries remain active until Salad proves a terminal
+ * stopped/failed state and all four active instance counters are zero.
+ * Configured replicas are advisory.
  */
 export function createRuntimeWatchdog({
   stopWorker,
@@ -270,7 +273,6 @@ export function createRuntimeWatchdog({
       state.retryTimer = null;
       void attemptStop();
     }, delay);
-    unrefTimer(state.retryTimer);
   }
 
   async function waitForFirstAttempt() {

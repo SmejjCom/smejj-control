@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const EMPTY_SHA256 = crypto.createHash("sha256").update("").digest("hex");
 const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 5_000;
+const RETRYABLE_STATUSES = new Set([408, 425, 429]);
 
 export function readBootstrapConfig(env = process.env) {
   const endpoint = required(env.IDRIVE_E2_ENDPOINT, "IDRIVE_E2_ENDPOINT").replace(/\/+$/, "");
@@ -29,7 +30,9 @@ export function readBootstrapConfig(env = process.env) {
     key,
     expectedSha256,
     maxArchiveBytes: boundedNumber(env.SMEJJ_CONTROL_ARTIFACT_MAX_BYTES, 8 * 1024 * 1024, 64 * 1024, MAX_ARCHIVE_BYTES),
-    timeoutMs: boundedNumber(env.SMEJJ_CONTROL_BOOTSTRAP_TIMEOUT_MS, 45_000, 5_000, 120_000)
+    timeoutMs: boundedNumber(env.SMEJJ_CONTROL_BOOTSTRAP_TIMEOUT_MS, 45_000, 5_000, 120_000),
+    attempts: boundedInteger(env.SMEJJ_CONTROL_BOOTSTRAP_ATTEMPTS, 12, 1, 20),
+    retryDelayMs: boundedNumber(env.SMEJJ_CONTROL_BOOTSTRAP_RETRY_DELAY_MS, 5_000, 100, 30_000)
   };
 }
 
@@ -54,13 +57,29 @@ export function createSignedGet(config, now = new Date()) {
   };
 }
 
-export async function downloadVerifiedArtifact(config, fetchImpl = fetch) {
-  const request = createSignedGet(config);
-  const signal = typeof AbortSignal !== "undefined" && AbortSignal.timeout
-    ? AbortSignal.timeout(config.timeoutMs)
-    : undefined;
-  const response = await fetchImpl(request.url, { headers: request.headers, signal });
-  if (!response.ok) throw new Error(`IDrive e2 artifact download failed with HTTP ${response.status}`);
+export async function downloadVerifiedArtifact(config, fetchImpl = fetch, {
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+} = {}) {
+  let response;
+  for (let attempt = 1; attempt <= config.attempts; attempt += 1) {
+    const request = createSignedGet(config);
+    const signal = typeof AbortSignal !== "undefined" && AbortSignal.timeout
+      ? AbortSignal.timeout(config.timeoutMs)
+      : undefined;
+    try {
+      response = await fetchImpl(request.url, { headers: request.headers, signal });
+    } catch (error) {
+      if (attempt === config.attempts) throw error;
+      await sleep(config.retryDelayMs);
+      continue;
+    }
+    if (response.ok) break;
+    if (!retryableStatus(response.status) || attempt === config.attempts) {
+      throw new Error(`IDrive e2 artifact download failed with HTTP ${response.status}`);
+    }
+    await sleep(config.retryDelayMs);
+  }
+  if (!response?.ok) throw new Error("IDrive e2 artifact download failed");
   const declaredBytes = Number(response.headers.get("content-length") || 0);
   if (declaredBytes > config.maxArchiveBytes) throw new Error("Control artifact exceeds configured byte limit");
   const archive = Buffer.from(await response.arrayBuffer());
@@ -68,6 +87,10 @@ export async function downloadVerifiedArtifact(config, fetchImpl = fetch) {
   const actualSha256 = sha256(archive);
   if (actualSha256 !== config.expectedSha256) throw new Error("Control artifact SHA-256 mismatch");
   return { archive, actualSha256 };
+}
+
+function retryableStatus(status) {
+  return RETRYABLE_STATUSES.has(Number(status)) || Number(status) >= 500;
 }
 
 export function validateArchiveEntries(listing) {
@@ -125,6 +148,10 @@ function boundedNumber(value, fallback, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, number));
+}
+
+function boundedInteger(value, fallback, min, max) {
+  return Math.round(boundedNumber(value, fallback, min, max));
 }
 
 function encodeS3Key(key) {

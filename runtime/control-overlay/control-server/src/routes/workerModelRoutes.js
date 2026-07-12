@@ -5,7 +5,7 @@ import { hydrateJobFromIdrive } from "../jobs/jobHydration.js";
 import { executeWithFallback, resolveModelRequest } from "../llm/modelRouter.js";
 import { signedS3Put } from "../storage/s3Signer.js";
 
-const ALLOWED_TOOLS = new Set(["read_file", "write_file", "run_cmd", "finish"]);
+const ALLOWED_TOOLS = new Set(["read_file", "write_file", "run_cmd", "browser_check", "finish"]);
 const ACTIVE_JOB_STATUSES = new Set(["planning", "running", "verifying"]);
 export const CODING_TOOLS = Object.freeze([
   tool("read_file", "Read up to 400 lines from a repository-relative text file.", {
@@ -20,6 +20,22 @@ export const CODING_TOOLS = Object.freeze([
   tool("run_cmd", "Run one allowlisted command as an argument array without a shell.", {
     command: { type: "array", minItems: 1, maxItems: 48, items: { type: "string" } }
   }, ["command"]),
+  tool("browser_check", "Inspect an approved HTTPS or local preview with bounded interactions, console/network checks and responsive screenshots.", {
+    url: { type: "string" },
+    actions: {
+      type: "array",
+      maxItems: 20,
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["click", "fill", "press"] },
+          selector: { type: "string" },
+          value: { type: "string" }
+        },
+        required: ["type", "selector"]
+      }
+    }
+  }, ["url"]),
   tool("finish", "Request the mandatory verification pipeline after the implementation is ready.", {
     summary: { type: "string" }
   }, ["summary"])

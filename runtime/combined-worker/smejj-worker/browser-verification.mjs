@@ -33,8 +33,10 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
       throwIfAborted(signal);
       const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height } });
       const errors = [];
+      const failedRequests = [];
       page.on("pageerror", (error) => errors.push(String(error.message || error).slice(0, 500)));
       page.on("console", (message) => { if (message.type() === "error") errors.push(message.text().slice(0, 500)); });
+      page.on("requestfailed", (request) => failedRequests.push({ url: safeUrl(request.url()), error: String(request.failure()?.errorText || "request_failed").slice(0, 200) }));
       await page.route("**/*", async (route) => {
         try {
           await assertSafeRequestUrl(root, route.request().url(), networkSafety);
@@ -45,13 +47,18 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
         }
       });
       const response = await page.goto(url, { waitUntil: "networkidle", timeout: 45_000 });
+      const actions = await runActions(page, preview.actions);
+      const accessibility = await accessibilitySnapshot(page);
       const bytes = await page.screenshot({ type: "jpeg", quality: 70, fullPage: false });
       screenshots.push({ name: `${viewport.name}.jpg`, contentType: "image/jpeg", base64: Buffer.from(bytes).toString("base64") });
       checks.push({
         name: viewport.name,
-        ok: (!response || response.ok()) && errors.length === 0,
+        ok: (!response || response.ok()) && errors.length === 0 && failedRequests.length === 0 && actions.every((action) => action.ok) && accessibility.ok,
         status: response?.status() || 200,
-        errors
+        errors,
+        failedRequests,
+        actions,
+        accessibility
       });
       await page.close();
     }
@@ -60,6 +67,55 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
     await browser.close();
   }
   return { required: true, ok: checks.every((check) => check.ok), url, checks, screenshots };
+}
+
+async function runActions(page, actions) {
+  const results = [];
+  for (const action of Array.isArray(actions) ? actions.slice(0, 20) : []) {
+    let normalized = { type: String(action?.type || ""), selector: String(action?.selector || "") };
+    try {
+      normalized = safeAction(action);
+      const locator = page.locator(normalized.selector);
+      if (await locator.count() !== 1) throw new Error("browser_action_selector_not_unique");
+      if (normalized.type === "click") await locator.click({ timeout: 10_000 });
+      if (normalized.type === "fill") {
+        const forbidden = await locator.evaluate((element) => element.type === "password" || /password|secret|token|api.?key/i.test(`${element.name} ${element.id} ${element.autocomplete}`));
+        if (forbidden) throw new Error("browser_sensitive_input_forbidden");
+        await locator.fill(normalized.value, { timeout: 10_000 });
+      }
+      if (normalized.type === "press") await locator.press(normalized.value, { timeout: 10_000 });
+      results.push({ type: normalized.type, selector: normalized.selector, ok: true });
+    } catch (error) {
+      results.push({ type: normalized.type, selector: normalized.selector, ok: false, error: String(error?.message || error).slice(0, 300) });
+    }
+  }
+  return results;
+}
+
+function safeAction(action = {}) {
+  const type = String(action.type || "");
+  const selector = String(action.selector || "").trim();
+  const value = String(action.value || "");
+  if (!new Set(["click", "fill", "press"]).has(type) || !selector || selector.length > 200 || /password|secret|token|api.?key/i.test(selector)) throw new Error("browser_action_invalid");
+  if (type === "fill" && value.length > 2_000) throw new Error("browser_action_value_too_large");
+  if (type === "press" && !new Set(["Enter", "Escape", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]).has(value)) throw new Error("browser_action_key_forbidden");
+  return { type, selector, value };
+}
+
+async function accessibilitySnapshot(page) {
+  return page.evaluate(() => {
+    const unlabeledInputs = Array.from(document.querySelectorAll("input,textarea,select")).filter((element) => {
+      if (element.type === "hidden") return false;
+      return !element.getAttribute("aria-label") && !element.getAttribute("aria-labelledby") && !element.labels?.length;
+    }).length;
+    const missingAlt = Array.from(document.images).filter((image) => !image.hasAttribute("alt")).length;
+    return { ok: unlabeledInputs === 0 && missingAlt === 0, unlabeledInputs, missingAlt };
+  });
+}
+
+function safeUrl(value) {
+  try { const url = new URL(value); return `${url.protocol}//${url.host}${url.pathname}`.slice(0, 500); }
+  catch { return "invalid-url"; }
 }
 
 function throwIfAborted(signal) {

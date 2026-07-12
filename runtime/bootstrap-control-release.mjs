@@ -4,7 +4,7 @@ const MAX_MODULE_BYTES = 1_000_000;
 const MODULES = Object.freeze({
   idrive: Object.freeze({
     file: "bootstrap-idrive-control.mjs",
-    sha256: "96f9db87bbc144d0984bb2667d08c8fe4f66182006dad42862e7ea876b17ac03"
+    sha256: "e2b8031dc737a3c65a4271b8f0e458af709c1d401fe52f0f58df2cbbf95f4cde"
   }),
   overlay: Object.freeze({
     file: "bootstrap-control-overlay.mjs",

@@ -31,7 +31,7 @@
     },
     {
       "path": "smejj-worker/browser-verification.mjs",
-      "sha256": "9b5f8c5565ddf014b05e6884dda5e0a7608891d490a5e814690f9dacb3d984ad"
+      "sha256": "a1682d7270c7553ae1a07239b90645a03291f5999e21ece23d8caf2ef0586b9c"
     },
     {
       "path": "smejj-worker/publish.mjs",
@@ -39,11 +39,11 @@
     },
     {
       "path": "smejj-worker/role-registry.mjs",
-      "sha256": "d278edd46f1eea6e8a86bfe24ff108a281124de96c8ddc03c38db125f25a6bfc"
+      "sha256": "423b104e3e29f55483fc7752a0396a63ca355c29cbd207481a46625b2f732d27"
     },
     {
       "path": "smejj-worker/agentloop.mjs",
-      "sha256": "62ee3ddfc79fbe00c21e0428e8a6232d0bd2478f49b402a913da82d2c15d0ada"
+      "sha256": "c81e108da36931606787e3f82a2b57e8c320c2c9df31633aed13ae7423ca0f83"
     },
     {
       "path": "smejj-worker/worker.mjs",

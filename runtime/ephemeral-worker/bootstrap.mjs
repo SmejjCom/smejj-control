@@ -28,7 +28,7 @@ export async function startEphemeralWorker({
   nodeVersion = process.version,
   dropPrivileges = dropRuntimePrivileges
 } = {}) {
-  appRoot = safeAppRoot(appRoot);
+  appRoot = validateEphemeralAppRoot(appRoot);
   const sourceBase = validateSourceBase(env.SMEJJ_EPHEMERAL_WORKER_SOURCE_BASE);
   const expectedManifestSha256 = requiredSha256(env.SMEJJ_EPHEMERAL_WORKER_MANIFEST_SHA256, "ephemeral_worker_manifest_sha256_required");
   assertRuntimeVersion(nodeVersion, EXPECTED_NODE, "node_runtime_version_mismatch");
@@ -189,9 +189,11 @@ function requiredSha256(value, reason) {
   return digest;
 }
 
-function safeAppRoot(value) {
+export function validateEphemeralAppRoot(value) {
   const root = path.resolve(String(value || ""));
-  if (!path.isAbsolute(root) || root === path.parse(root).root || root.length < 5) {
+  if (!path.isAbsolute(root)
+    || root === path.parse(root).root
+    || (root !== "/app" && root.length < 5)) {
     throw new Error("ephemeral_worker_app_root_invalid");
   }
   return root;

@@ -9,7 +9,7 @@ const COMMON_RULES = Object.freeze([
 export const AGENT_ROLE_REGISTRY = Object.freeze({
   planner: role("planner", ["read_file", "search", "rag", "memory"], ["write_file", "run_cmd", "publish"],
     "Build a scoped, replayable plan with affected files, risks, rollback and required checks."),
-  coding: role("coding", ["read_file", "write_file", "run_cmd", "search"], ["publish", "merge", "production_deploy"],
+  coding: role("coding", ["read_file", "write_file", "run_cmd", "search", "browser_check"], ["publish", "merge", "production_deploy"],
     "Implement the smallest safe patch, use one structured tool at a time, and call finish only when ready for independent verification."),
   review: role("review", ["read_file", "search", "diff", "test_results"], ["write_file", "publish"],
     "Review independently for correctness, regression, maintainability and requirement coverage; report evidence and dissent."),
