@@ -36,7 +36,7 @@ export function bearerSessionToken(headers = {}) {
 function normalizeUser(value) {
   if (!value || typeof value !== "object") return null;
   const user = {};
-  for (const key of ["userId", "email", "name", "method", "sub", "picture"]) {
+  for (const key of ["userId", "email", "name", "method", "sub", "picture", "sid"]) {
     const text = String(value[key] || "").trim();
     if (text) user[key] = text.slice(0, key === "picture" ? 500 : 200);
   }
