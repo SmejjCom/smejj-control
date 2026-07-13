@@ -93,6 +93,8 @@ const server = http.createServer(async (req, res) => {
     }
     const readMethod = req.method === "GET" || req.method === "HEAD";
     if (readMethod && url.pathname === ROUTES.root) return serveFile(res, "index.html");
+    if (readMethod && (url.pathname === "/auth/login" || url.pathname === "/auth/login/")) return serveFile(res, "auth/login/index.html");
+    if (readMethod && (url.pathname === "/auth/register" || url.pathname === "/auth/register/")) return serveFile(res, "auth/register/index.html");
     if (readMethod && url.pathname.startsWith("/assets/storage/")) return serveStorageModule(res, url.pathname.replace("/assets/storage/", ""));
     if (readMethod && url.pathname.startsWith("/assets/ai/")) return serveAiModule(res, url.pathname.replace("/assets/ai/", ""));
     if (readMethod && url.pathname.startsWith("/assets/shared/")) return serveSharedModule(res, url.pathname.replace("/assets/shared/", ""));

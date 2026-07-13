@@ -4,6 +4,7 @@ import { transitionIdriveLiteJob } from "../../../src/jobs/index.js";
 import { issueWorkerToken, workerTokenSecret } from "../auth/workerToken.js";
 import { getJob, replaceJob } from "../jobs/jobStore.js";
 import { evaluateMemoryEligibility } from "../jobs/memoryEligibility.js";
+import { hashActionLog } from "../shared/hash.js";
 
 const MAX_SELF_FIX_ATTEMPTS = 3;
 
@@ -251,7 +252,7 @@ function verifiedReplayPlan(job, source) {
   const expectedHash = String(job.replay.sourceActionLogSha256 || "");
   if (!/^[a-f0-9]{64}$/.test(expectedHash)
     || source.result.actionLogSha256 !== expectedHash
-    || sha256(JSON.stringify(source.result.actionLog)) !== expectedHash) {
+    || hashActionLog(source.result.actionLog) !== expectedHash) {
     throw new Error("deterministic_replay_action_log_mismatch");
   }
   const sameTask = source.task === job.task;

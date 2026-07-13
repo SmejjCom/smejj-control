@@ -8,6 +8,37 @@ const PORT = Number(process.env.SMEJJ_WORKER_PORT || process.env.PORT || 8080);
 const HOST = process.env.SMEJJ_HOST || "0.0.0.0";
 let activeRun = false;
 
+const YES = new Set(["1", "true", "yes", "on"]);
+
+export function readIsolationPolicy(env = process.env) {
+  const required = enabled(env.SMEJJ_REQUIRE_HARD_ISOLATION);
+  const attested = enabled(env.SMEJJ_RUNTIME_ISOLATION_ATTESTED);
+  const ephemeral = enabled(env.SMEJJ_RUNTIME_EPHEMERAL);
+  const profile = String(env.SMEJJ_RUNTIME_ISOLATION_PROFILE || "unverified").trim();
+  const egress = String(env.SMEJJ_RUNTIME_EGRESS_POLICY || "unverified").trim();
+  const hard = attested && ephemeral && profile === "container-v1" && egress === "allowlist";
+  return {
+    required,
+    hard,
+    enforced: required ? hard : false,
+    profile,
+    egress,
+    ephemeral,
+    attested,
+    reason: hard
+      ? "attested_ephemeral_container"
+      : required
+        ? "hard_isolation_attestation_missing"
+        : "shared_process_profile_not_hard_isolated"
+  };
+}
+
+export function assertIsolationPolicy(env = process.env) {
+  const policy = readIsolationPolicy(env);
+  if (policy.required && !policy.hard) throw new Error(`worker_isolation_required:${policy.reason}`);
+  return policy;
+}
+
 export function createServer() {
   return http.createServer(async (req, res) => {
     try {
@@ -29,11 +60,17 @@ export function createServer() {
             browser: process.env.SMEJJ_RUNTIME_BROWSER_VERSION || "unverified",
             profile: process.env.SMEJJ_RUNTIME_PROFILE || "unverified"
           },
+          isolation: readIsolationPolicy(),
           secretsExposed: false
         });
       }
       if (req.method === "POST" && url.pathname === "/run") {
         if (activeRun) return send(res, 429, { ok: false, error: "worker_busy" });
+        try {
+          assertIsolationPolicy();
+        } catch (error) {
+          return send(res, 503, { ok: false, error: String(error?.message || error).slice(0, 200) });
+        }
         const token = bearerToken(req.headers.authorization);
         if (!token) return send(res, 401, { ok: false, error: "worker_token_missing" });
         const payload = await readJson(req);
@@ -80,6 +117,10 @@ async function readJson(req) {
 function bearerToken(value) {
   const match = String(value || "").match(/^Bearer\s+(.+)$/i);
   return match ? match[1].trim() : "";
+}
+
+function enabled(value) {
+  return YES.has(String(value || "").trim().toLowerCase());
 }
 
 function send(res, status, payload) {

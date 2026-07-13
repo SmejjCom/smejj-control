@@ -48,6 +48,7 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
       });
       const response = await page.goto(url, { waitUntil: "networkidle", timeout: 45_000 });
       const actions = await runActions(page, preview.actions);
+      const evidence = await collectPageEvidence(page);
       const accessibility = await accessibilitySnapshot(page);
       const bytes = await page.screenshot({ type: "jpeg", quality: 70, fullPage: false });
       screenshots.push({ name: `${viewport.name}.jpg`, contentType: "image/jpeg", base64: Buffer.from(bytes).toString("base64") });
@@ -58,6 +59,7 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
         errors,
         failedRequests,
         actions,
+        evidence,
         accessibility
       });
       await page.close();
@@ -67,6 +69,57 @@ export async function runBrowserVerification(root, preview = {}, { loadPlaywrigh
     await browser.close();
   }
   return { required: true, ok: checks.every((check) => check.ok), url, checks, screenshots };
+}
+
+async function collectPageEvidence(page) {
+  return page.evaluate(() => {
+    const clean = (value, limit = 500) => String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+    const sensitive = (element) => /password|secret|token|api.?key|one.?time|otp/i.test([
+      element.type,
+      element.name,
+      element.id,
+      element.autocomplete,
+      element.getAttribute("aria-label"),
+      element.getAttribute("placeholder")
+    ].join(" "));
+    const visible = (element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const safeHref = (element) => {
+      try {
+        const url = new URL(element.href, location.href);
+        return `${url.origin}${url.pathname}`.slice(0, 300);
+      } catch {
+        return "";
+      }
+    };
+    const interactive = Array.from(document.querySelectorAll("a[href],button,input,textarea,select,[role='button'],[role='link'],[role='textbox']"))
+      .filter((element) => visible(element) && !sensitive(element))
+      .slice(0, 80)
+      .map((element) => ({
+        tag: element.tagName.toLowerCase(),
+        role: clean(element.getAttribute("role"), 40),
+        type: clean(element.getAttribute("type"), 40),
+        id: clean(element.id, 120),
+        name: clean(element.getAttribute("name"), 120),
+        ariaLabel: clean(element.getAttribute("aria-label"), 200),
+        placeholder: clean(element.getAttribute("placeholder"), 200),
+        text: clean(element.innerText || element.textContent, 240),
+        href: element.matches("a[href]") ? safeHref(element) : ""
+      }));
+    return {
+      title: clean(document.title, 240),
+      url: String(location.href).slice(0, 500),
+      headings: Array.from(document.querySelectorAll("h1,h2,h3"))
+        .filter(visible)
+        .slice(0, 30)
+        .map((element) => ({ level: element.tagName.toLowerCase(), text: clean(element.innerText || element.textContent, 300) })),
+      interactive,
+      visibleText: clean(document.body?.innerText, 6_000)
+    };
+  });
 }
 
 function browserLaunchOptions() {

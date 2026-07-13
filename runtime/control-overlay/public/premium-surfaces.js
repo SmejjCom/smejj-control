@@ -1,12 +1,16 @@
 import { CLIENT_ROUTES, STORAGE_KEYS } from "./config.js";
 import { applyServerAiStatus } from "/assets/storage/index.js";
-import { initAutonomousCodingSurface } from "./autonomous-coding.js";
+import { initAutonomousCodingSurface } from "./autonomous-coding.js?v=5";
+import { initSettingsSurface } from "./settings-surface.js?v=3";
+import { initAccountPrivacySurface } from "./account-privacy.js?v=1";
 
 export function enhancePremiumSurfaces() {
   loadPremiumStyles();
   document.querySelectorAll(".view:not(#start)").forEach((view) => view.classList.add("premium-view"));
   enhanceProjectActions();
   enhanceModelRegistry();
+  initSettingsSurface();
+  initAccountPrivacySurface();
   initAutonomousCodingSurface();
   syncServerAiStatus();
 }

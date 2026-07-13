@@ -31,7 +31,7 @@
     },
     {
       "path": "smejj-worker/browser-verification.mjs",
-      "sha256": "3eb947e480cfc506a1f9d1a57a1102785fd5c043d3043b73f45f11994d367721"
+      "sha256": "cbf993c63f93c39c75b251d994e3b2ddc71696191d1c4c4e315bf826f15e9b95"
     },
     {
       "path": "smejj-worker/publish.mjs",
@@ -39,15 +39,15 @@
     },
     {
       "path": "smejj-worker/role-registry.mjs",
-      "sha256": "423b104e3e29f55483fc7752a0396a63ca355c29cbd207481a46625b2f732d27"
+      "sha256": "9dcb550fa8d598bc31c6c5c38d2a0d8262a5b130e32d046755cfd1cf0d2f76a2"
     },
     {
       "path": "smejj-worker/agentloop.mjs",
-      "sha256": "c81e108da36931606787e3f82a2b57e8c320c2c9df31633aed13ae7423ca0f83"
+      "sha256": "f1cc758dd0a6231cd8f567d3c1f4ca038a7a491b6f4d2b6491f2cc549b831b70"
     },
     {
       "path": "smejj-worker/worker.mjs",
-      "sha256": "c0dee4afc5b0b2f0b49497231845ae0d63fb5eec97ecce137d3a946f6ebb0cfb"
+      "sha256": "eb02578a9c25aaf661b68c0d9e50cf1dec328377d8bb812a3605b32b2f4ea107"
     }
   ]
 }

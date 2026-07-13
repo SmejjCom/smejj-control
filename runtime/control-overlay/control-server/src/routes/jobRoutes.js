@@ -37,7 +37,8 @@ export function hasLocalIdriveConfig(env = process.env) {
 
 export async function handleCreateJob(req, res, { env = process.env, writeEnvelope = writeJobEnvelopeToIdrive } = {}) {
   const input = await readJson(req);
-  const ownedInput = req.authUser ? { ...input, userId: authenticatedUserId(req.authUser) } : input;
+  const ownerId = req.authUser ? authenticatedUserId(req.authUser) : "";
+  const ownedInput = req.authUser ? { ...input, userId: ownerId, tenantId: ownerId } : input;
   const body = inferDeterministicReplay(ownedInput, ownedInput.userId);
   if (!String(body.task || "").trim()) return json(res, 400, { error: "Missing task" });
   const repository = body.repository || body.repo;
@@ -274,6 +275,7 @@ export async function handleApproveJob(url, req, res, { env = process.env, persi
     status: "human_approved",
     approvedAt: new Date().toISOString(),
     approvedDiffSha256: diffSha256,
+    approvedBy: req.authUser ? authenticatedUserId(req.authUser) : "",
     mergeAllowed: false,
     mergeRequiresExternalHumanAction: true
   };

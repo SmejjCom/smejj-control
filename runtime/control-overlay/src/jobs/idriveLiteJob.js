@@ -19,6 +19,7 @@ export function createIdriveLiteCodingJob({
   jobId,
   projectId,
   userId = "",
+  tenantId = "",
   task = "",
   modelId = DEFAULT_MODEL_ID,
   createdAt = new Date().toISOString(),
@@ -33,6 +34,7 @@ export function createIdriveLiteCodingJob({
   const safeJobId = normalizeId(jobId, "jobId");
   const safeProjectId = normalizeId(projectId, "projectId");
   const safeUserId = userId ? normalizeId(userId, "userId") : "";
+  const safeTenantId = tenantId ? normalizeId(tenantId, "tenantId") : safeUserId;
   const taskText = String(task || "").slice(0, 20_000);
   const modelDefinition = getModelDefinition(modelId) || getModelDefinition(DEFAULT_MODEL_ID);
   const capsule = buildTaskCapsule(safeJobId, safeProjectId, modelDefinition.id, createdAt);
@@ -46,6 +48,7 @@ export function createIdriveLiteCodingJob({
     message: "Job created",
     createdAt,
     userId: safeUserId,
+    tenantId: safeTenantId,
     projectId: safeProjectId,
     task: taskText,
     repository,

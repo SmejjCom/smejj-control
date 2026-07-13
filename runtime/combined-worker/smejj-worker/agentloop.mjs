@@ -17,6 +17,7 @@ import { publishDraftPullRequest } from "./publish.mjs";
 
 const MAX_ITERATIONS = 25;
 const MAX_TOOL_RESULT_CHARS = 24_000;
+const ACTION_LOG_SCHEMA_VERSION = 2;
 
 export async function runCodingJob(payload = {}, dependencies = {}) {
   const deadlineMs = Date.now() + runtimeLimitMs();
@@ -179,7 +180,7 @@ export async function runCodingJob(payload = {}, dependencies = {}) {
       finishSummary,
       expectedDiffSha256: diffSha256
     }) : null;
-    const actionLogSha256 = actionLog ? sha256(JSON.stringify(actionLog)) : null;
+    const actionLogSha256 = actionLog ? hashActionLog(actionLog) : null;
 
     return {
       ok,
@@ -317,6 +318,9 @@ function initialMessages(task, repositorySummary, previousErrors, followUpContex
         "Use exactly one provided tool per response and read before writing.",
         "Commands are argument arrays and must pass the worker allowlist; never request shell syntax.",
         "The built-in rg command supports --files, line numbers, file-only results, ignore-case, fixed strings, and repository-relative targets.",
+        "For explicit website or browser tasks, call browser_check before finish and ground the final summary in its page evidence.",
+        "Every browser_check starts from the approved URL; include the full ordered action sequence needed for the state you want to inspect.",
+        "Never claim that a page was opened, read, clicked, or filled unless browser_check returned successful evidence for that action.",
         executionMode === "analyze"
           ? "This is a read-only analysis. Never call write_file and finish with a concise evidence-based analysis."
           : "This is an edit task. Make only the changes required by the task."
@@ -450,7 +454,7 @@ function replayDiffAction(diff, source) {
 
 function buildActionLog({ executionMode, baseCommit, repository, actions, finishSummary, expectedDiffSha256 }) {
   const value = {
-    schemaVersion: 1,
+    schemaVersion: ACTION_LOG_SCHEMA_VERSION,
     executionMode,
     baseCommit,
     repository: {
@@ -464,10 +468,14 @@ function buildActionLog({ executionMode, baseCommit, repository, actions, finish
   return Buffer.byteLength(JSON.stringify(value), "utf8") <= 900_000 ? value : null;
 }
 
+function hashActionLog(value) {
+  return sha256(value?.schemaVersion === 2 ? canonicalJson(value) : JSON.stringify(value));
+}
+
 function validateReplayPlan(value, repository, executionMode) {
   const actionLog = value?.actionLog;
   const actionLogSha256 = String(value?.actionLogSha256 || "");
-  if (!actionLog || actionLog.schemaVersion !== 1 || sha256(JSON.stringify(actionLog)) !== actionLogSha256) {
+  if (!actionLog || !new Set([1, ACTION_LOG_SCHEMA_VERSION]).has(actionLog.schemaVersion) || hashActionLog(actionLog) !== actionLogSha256) {
     throw new Error("deterministic_replay_action_log_invalid");
   }
   if (actionLog.executionMode !== executionMode
@@ -484,6 +492,19 @@ function validateReplayPlan(value, repository, executionMode) {
     throw new Error("deterministic_replay_expected_diff_invalid");
   }
   return { actionLog, actionLogSha256 };
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("replay_canonical_json_requires_finite_numbers");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  throw new TypeError("replay_canonical_json_requires_json_value");
 }
 
 async function applyReplayActions(root, actions, iterations, replayActions, signal) {

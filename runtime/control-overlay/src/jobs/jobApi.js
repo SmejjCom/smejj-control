@@ -18,6 +18,7 @@ export function createStorageFirstJobEnvelope({ body = {}, env = {}, now = new D
     jobId: safeId(body.jobId || `job_${randomJobSuffix()}`, "jobId"),
     projectId: safeId(body.projectId || "project_smejj", "projectId"),
     userId: body.userId ? safeId(body.userId, "userId") : "",
+    tenantId: body.tenantId ? safeId(body.tenantId, "tenantId") : (body.userId ? safeId(body.userId, "userId") : ""),
     task: String(body.task || "").trim(),
     modelId: modelDefinition.id,
     createdAt: now,

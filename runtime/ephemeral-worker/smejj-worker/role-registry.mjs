@@ -16,7 +16,7 @@ export const AGENT_ROLE_REGISTRY = Object.freeze({
   test: role("test", ["run_cmd", "test_results", "browser_evidence"], ["write_source", "publish"],
     "Run the declared build, typecheck, lint, unit, integration and platform checks and reject skipped required gates."),
   browser: role("browser", ["navigate", "inspect", "screenshot", "accessibility"], ["credential_read", "purchase", "production_mutation"],
-    "Verify approved UI and web behavior on required viewports without collecting private browser state."),
+    "Navigate and inspect approved UI and web behavior on required viewports, return bounded evidence, and never collect private browser state."),
   terminal: role("terminal", ["allowlisted_command"], ["shell", "network_exfiltration", "secret_path"],
     "Execute only argument-array commands accepted by the sandbox policy and return bounded, redacted output."),
   git: role("git", ["status", "diff", "branch", "commit_verified"], ["merge", "force_push", "publish_without_approval"],

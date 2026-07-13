@@ -20,7 +20,7 @@ export const CODING_TOOLS = Object.freeze([
   tool("run_cmd", "Run one allowlisted command as an argument array without a shell.", {
     command: { type: "array", minItems: 1, maxItems: 48, items: { type: "string" } }
   }, ["command"]),
-  tool("browser_check", "Inspect an approved HTTPS or local preview with bounded interactions, console/network checks and responsive screenshots.", {
+  tool("browser_check", "Navigate and inspect an approved HTTPS or local preview with bounded page evidence, interactions, console/network checks and responsive screenshots.", {
     url: { type: "string" },
     actions: {
       type: "array",
