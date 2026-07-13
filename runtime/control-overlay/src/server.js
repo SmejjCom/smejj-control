@@ -46,6 +46,7 @@ import { bearerSessionToken, issueSessionToken, verifySessionToken } from "../co
 import { createSessionHandoffStore, isSessionHandoffId } from "../control-server/src/auth/sessionHandoff.js";
 import { handleTrainingConsentRoute } from "../control-server/src/routes/trainingConsentRoutes.js";
 import { signGoogleAuthState, verifyGoogleAuthState, verifyGoogleIdToken } from "./auth/googleAuth.js";
+import { emailSessionStillValid, handleEmailAuthRoutes, revokeCurrentEmailSession } from "../control-server/src/routes/emailAuthRoutes.js";
 
 installCrashGuard(); // kein stiller Tod: unbehandelte Fehler -> Log mit Stack + Exit 1 (Probes uebernehmen)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,9 @@ const server = http.createServer(async (req, res) => {
       res.setHeader("Cache-Control", "private, no-store");
       const authenticatedUser = readSession(req);
       if (!authenticatedUser) return json(res, 401, { ok: false, error: "authentication_required" });
+      if (!(await emailSessionStillValid(authenticatedUser, process.env))) {
+        return json(res, 401, { ok: false, error: "session_revoked_or_expired" });
+      }
       req.authUser = authenticatedUser;
     }
     const readMethod = req.method === "GET" || req.method === "HEAD";
@@ -124,7 +128,11 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: error.message || "Google Login fehlgeschlagen." });
       }
     }
-    if (req.method === "POST" && url.pathname === ROUTES.api.authLogout) return handleAuthLogout(res);
+    if (req.method === "POST" && url.pathname === ROUTES.api.authLogout) return await handleAuthLogout(req, res);
+    if (url.pathname.startsWith("/api/auth/")) {
+      const handled = await handleEmailAuthRoutes(req, url, res, emailAuthContext(url));
+      if (handled) return;
+    }
     if (req.method === "POST" && url.pathname === ROUTES.api.passkeyRegisterOptions) return await handlePasskeyRegisterOptions(req, res, { env: process.env });
     if (req.method === "POST" && url.pathname === ROUTES.api.passkeyRegisterVerify) return await handlePasskeyRegisterVerify(req, res, { env: process.env, makeSessionCookie: serializeSessionCookie, makeAccessToken: serializeSessionToken });
     if (req.method === "POST" && url.pathname === ROUTES.api.passkeyLoginOptions) return await handlePasskeyLoginOptions(req, res, { env: process.env });
@@ -234,9 +242,10 @@ function handleAuthConfig(res) {
   });
 }
 
-function handleAuthMe(req, res) {
+async function handleAuthMe(req, res) {
   const user = readSession(req);
-  json(res, 200, { authenticated: Boolean(user), user });
+  const valid = user ? await emailSessionStillValid(user, process.env) : false;
+  json(res, 200, { authenticated: Boolean(user) && valid, user: valid ? user : null });
 }
 
 function handleAuthSessionToken(req, res) {
@@ -357,13 +366,30 @@ async function handleGoogleAuthStart(req, res, url) {
   res.end();
 }
 
-function handleAuthLogout(res) {
+async function handleAuthLogout(req, res) {
+  // Serverseitig: E-Mail-Sessions in der Registry widerrufen (nicht nur Cookie loeschen).
+  await revokeCurrentEmailSession(readSession(req), process.env).catch(() => {});
   res.writeHead(200, {
     ...SECURITY_HEADERS,
     "Content-Type": "application/json; charset=utf-8",
-    "Set-Cookie": "smejj_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    "Set-Cookie": "smejj_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
   });
   res.end(JSON.stringify({ authenticated: false }, null, 2));
+}
+
+function emailAuthContext(url) {
+  return {
+    env: process.env,
+    readJson,
+    json,
+    readSession,
+    makeSessionCookie: serializeSessionCookie,
+    makeAccessToken: serializeSessionToken,
+    requestOrigin(req) {
+      const proto = req.headers["x-forwarded-proto"] || (url.hostname === "localhost" ? "http" : "https");
+      return `${String(proto).split(",")[0].trim()}://${req.headers.host}`;
+    }
+  };
 }
 
 // Rate-Limit fuer die offene Websuche: 20 Anfragen / 60s pro IP (free-safe, in-memory).
