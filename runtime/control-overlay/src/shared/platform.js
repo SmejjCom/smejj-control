@@ -174,6 +174,7 @@ export const ROUTES = {
     workerPreflight: "/api/workers/preflight",
     browserFetch: "/api/browser/fetch",
     browserRemote: "/api/browser/remote",
+    mausRun: "/api/maus/run",
     jobs: "/api/jobs",
     jobQueue: "/api/jobs/queue",
     freeExecutor: "/api/free-executor",
