@@ -25,6 +25,7 @@ import { recoverWorkerRuntimeOnStartup } from "../control-server/src/orchestrato
 import { handleStoragePresign } from "../control-server/src/routes/storagePresignRoutes.js";
 import { handleBrowserFetch } from "../control-server/src/routes/browserProxyRoutes.js";
 import { handleBrowserRemote } from "../control-server/src/routes/browserRemoteRoutes.js";
+import { handleMausRun, handleMausStatus } from "../control-server/src/routes/mausEngineRoutes.js";
 import { handlePasskeyLoginOptions, handlePasskeyLoginVerify, handlePasskeyRegisterOptions, handlePasskeyRegisterVerify } from "../control-server/src/routes/passkeyRoutes.js";
 import { handleModelStatus, handleModelsStatus, handleWorkerPreflight } from "../control-server/src/routes/modelRoutes.js";
 import { handleWorkerModelAction, handleWorkerValidate } from "../control-server/src/routes/workerModelRoutes.js";
@@ -141,6 +142,8 @@ const server = http.createServer(async (req, res) => {
     if (readMethod && url.pathname === ROUTES.api.webSearch) return await handleWebSearch(req, url, res);
     if (readMethod && url.pathname === ROUTES.api.browserFetch) return await handleBrowserFetch(url, res, { req });
     if (readMethod && url.pathname === ROUTES.api.browserRemote) return await handleBrowserRemote(url, res, { req });
+    if (req.method === "POST" && url.pathname === ROUTES.api.mausRun) return await handleMausRun(req, res);
+    if (readMethod && url.pathname === ROUTES.api.mausRun) return handleMausStatus(req, res);
     if (req.method === "POST" && url.pathname === ROUTES.api.chat) {
       if (!allowPublicModelRequest(req, res)) return;
       return await handleChat(req, res);
