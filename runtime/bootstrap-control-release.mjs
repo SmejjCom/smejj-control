@@ -8,7 +8,7 @@ const MODULES = Object.freeze({
   }),
   overlay: Object.freeze({
     file: "bootstrap-control-overlay.mjs",
-    sha256: "f500bd220d86e9765328244a7e8ff3dfe8af5fa110bfa35d5f92ed532c2926f7"
+    sha256: "fba99e420c4c81eca64b7082455f751a9803ca5380b4b4894f452dafb74acf36"
   })
 });
 
