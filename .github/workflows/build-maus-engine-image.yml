@@ -1,0 +1,71 @@
+# smejj.com — baut das Maus-Engine-Worker-Image aus dem hochgeladenen
+# Build-Kontext (smejj-maus-engine-context.tar.gz) und pusht es nach ghcr.io.
+# Nutzt AUSSCHLIESSLICH den automatischen GITHUB_TOKEN (niemand tippt Tokens).
+# Kosten: GitHub Actions ist fuer dieses Repo im Free-Rahmen (Free-only-Policy).
+name: build-maus-engine-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "smejj-maus-engine-context.tar.gz"
+      - ".github/workflows/build-maus-engine-image.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/smejjcom/smejj-maus-engine
+    steps:
+      - name: Quellen holen
+        uses: actions/checkout@v4
+
+      - name: Build-Kontext entpacken
+        run: |
+          mkdir -p build
+          tar -xzf smejj-maus-engine-context.tar.gz -C build
+          test -f build/workers/maus-engine/Dockerfile
+          test -f build/workers/maus-engine/worker.mjs
+          test -f build/workers/glm-salad/s3.js
+          test -f build/schemas/maus-action-plan.schema.json
+
+      - name: Bei ghcr.io anmelden (automatischer GITHUB_TOKEN)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Image bauen
+        run: |
+          docker build \
+            -f build/workers/maus-engine/Dockerfile \
+            -t "$IMAGE:v1" \
+            -t "$IMAGE:latest" \
+            -t "$IMAGE:${{ github.sha }}" \
+            build
+
+      - name: Smoke-Test (health, 401 fail-closed, 422 fail-closed)
+        run: |
+          docker run -d --name smoke -p 18090:8080 \
+            -e SMEJJ_MAUS_ENGINE_TOKEN=smejj-ci-preflight-token \
+            -e SMEJJ_MAUS_EXIT_AFTER_RUN=NO \
+            "$IMAGE:v1"
+          ok=""
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18090/health | grep -q "smejj.com maus-engine"; then ok=yes; break; fi
+            sleep 1
+          done
+          test -n "$ok"
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:18090/run -H "content-type: application/json" -d '{"plan":{}}')
+          test "$code" = "401"
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:18090/run -H "authorization: Bearer smejj-ci-preflight-token" -H "content-type: application/json" -d '{"plan":{}}')
+          test "$code" = "422"
+          docker rm -f smoke
+
+      - name: Image pushen (v1 + latest + Commit-SHA)
+        run: |
+          docker push "$IMAGE:v1"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
