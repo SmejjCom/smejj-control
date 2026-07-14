@@ -10,6 +10,7 @@ const USER_PROTECTED_EXACT_PATHS = new Set([
   ROUTES.api.passkeyRegisterOptions,
   ROUTES.api.passkeyRegisterVerify,
   ROUTES.api.terminalRun,
+  ROUTES.api.mausRun,
   ROUTES.api.fileRead,
   ROUTES.api.fileWrite,
   ROUTES.api.gitStatus,
