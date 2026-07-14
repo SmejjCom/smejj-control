@@ -39,6 +39,7 @@ const FILES = [
   "control-server/src/routes/saladRoutes.js",
   "control-server/src/routes/workerModelRoutes.js",
   "control-server/src/routes/mausEngineRoutes.js",
+  "workers/maus-engine/prompt-template.mjs",
   "control-server/src/storage/s3Signer.js"
 ];
 
