@@ -313,12 +313,31 @@ function send(res, status, payload) {
 
 // Interaktive Live-Browser-Sessions (klicken/tippen/scrollen) — die Engine
 // bekommt exakt dieselben SSRF-Schutz-Helfer wie das Einmal-Rendern.
-// Lazy-Import: fehlt session-engine.js im Runtime-Bundle (alter Bootstrap),
+// Lazy-Import: fehlt session-engine.js im Runtime-Bundle (aelterer Bootstrap),
+// wird sie aus derselben commit-gepinnten Quelle nachgeladen, aus der auch
+// diese Datei stammt (identische Vertrauensgrenze). Schlaegt beides fehl,
 // bleibt /render voll funktionsfaehig und nur der Session-Pfad liefert 503.
+const COMBINED_SOURCE_RE = /^https:\/\/raw\.githubusercontent\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[a-f0-9]{40}\/runtime\/combined-worker$/;
+
+async function importSessionEngineModule() {
+  try {
+    return await import("./session-engine.js");
+  } catch {
+    // Fallback nur aus der validierten, commit-gepinnten Runtime-Quelle.
+    const base = String(envValue("SMEJJ_COMBINED_WORKER_SOURCE_BASE", "")).trim().replace(/\/+$/, "");
+    if (!COMBINED_SOURCE_RE.test(base)) throw new Error("session_engine_source_not_pinned");
+    const response = await fetch(`${base}/remote-browser/session-engine.js`, { redirect: "error", cache: "no-store" });
+    if (!response.ok) throw new Error(`session_engine_fetch_failed:${response.status}`);
+    const source = await response.text();
+    if (!source || source.length > 1_000_000) throw new Error("session_engine_source_invalid");
+    return await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+  }
+}
+
 let defaultSessionEngine = null;
 async function sessionEngineSingleton() {
   if (!defaultSessionEngine) {
-    const { createSessionEngine } = await import("./session-engine.js");
+    const { createSessionEngine } = await importSessionEngineModule();
     defaultSessionEngine = createSessionEngine({
       isAllowedTarget,
       buildPageOptions,
