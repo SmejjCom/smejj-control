@@ -26,6 +26,12 @@ export async function startCombinedWorker({
     ["remote-browser/worker.js", path.join(appRoot, "remote-browser/worker.js")],
     ...WORKER_FILES.map((name) => [`smejj-worker/${name}`, path.join(appRoot, "smejj-worker", name)])
   ];
+  // Optionale Dateien: fehlen sie im (aelteren) Runtime-Ordner, bootet der
+  // Worker trotzdem — der Session-Pfad meldet dann sauber 503 (fail-closed),
+  // /render bleibt unveraendert funktionsfaehig (Non-Regression).
+  const optionalRequests = [
+    ["remote-browser/session-engine.js", path.join(appRoot, "remote-browser/session-engine.js")]
+  ];
   const downloaded = await Promise.all(requests.map(async ([source, target]) => {
     const response = await fetchImpl(`${base}/${source}`, { redirect: "error" });
     if (!response.ok) throw new Error(`combined_worker_fetch_failed:${source}:${response.status}`);
@@ -33,6 +39,17 @@ export async function startCombinedWorker({
     if (content.length > 1_000_000) throw new Error(`combined_worker_file_too_large:${source}`);
     return [target, content];
   }));
+  for (const [source, target] of optionalRequests) {
+    try {
+      const response = await fetchImpl(`${base}/${source}`, { redirect: "error" });
+      if (!response.ok) continue;
+      const content = await response.text();
+      if (content.length > 1_000_000) continue;
+      downloaded.push([target, content]);
+    } catch {
+      // Optional — ohne Datei laeuft der Worker im bisherigen Umfang weiter.
+    }
+  }
   const backups = [];
   try {
     for (const [target, content] of downloaded) {
