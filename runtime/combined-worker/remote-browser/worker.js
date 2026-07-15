@@ -311,12 +311,49 @@ function send(res, status, payload) {
   res.end(JSON.stringify(payload, null, 2));
 }
 
-export function createServer({ renderer = renderWithPlaywright, token = TOKEN } = {}) {
+// Interaktive Live-Browser-Sessions (klicken/tippen/scrollen) — die Engine
+// bekommt exakt dieselben SSRF-Schutz-Helfer wie das Einmal-Rendern.
+// Lazy-Import: fehlt session-engine.js im Runtime-Bundle (alter Bootstrap),
+// bleibt /render voll funktionsfaehig und nur der Session-Pfad liefert 503.
+let defaultSessionEngine = null;
+async function sessionEngineSingleton() {
+  if (!defaultSessionEngine) {
+    const { createSessionEngine } = await import("./session-engine.js");
+    defaultSessionEngine = createSessionEngine({
+      isAllowedTarget,
+      buildPageOptions,
+      assertPublicHostname,
+      assertPublicRequest,
+      playwrightLoader: loadPlaywright,
+      jpegQuality: JPEG_QUALITY,
+      navTimeoutMs: NAV_TIMEOUT_MS
+    });
+  }
+  return defaultSessionEngine;
+}
+
+export function createServer({ renderer = renderWithPlaywright, token = TOKEN, sessionEngine = null } = {}) {
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", "http://worker.local");
       if (req.method === "GET" && url.pathname === "/health") {
         return send(res, 200, { ok: true, app: "smejj.com remote-browser-worker", codingWorker: true, activeCodingRun });
+      }
+      if (req.method === "POST" && (url.pathname === "/session" || url.pathname === "/session/act" || url.pathname === "/session/close")) {
+        if (!isAuthorized(req, token)) return send(res, 401, { ok: false, error: "Unauthorized" });
+        let engine = sessionEngine;
+        if (!engine) {
+          try {
+            engine = await sessionEngineSingleton();
+          } catch {
+            return send(res, 503, { ok: false, error: "session_engine_unavailable" });
+          }
+        }
+        const body = await readJson(req);
+        const result = url.pathname === "/session" ? await engine.open(body)
+          : url.pathname === "/session/act" ? await engine.act(body)
+          : await engine.close(body);
+        return send(res, result.ok ? 200 : (result.status || 400), result);
       }
       if (req.method === "POST" && url.pathname === "/run") {
         if (activeCodingRun) return send(res, 429, { ok: false, error: "coding_worker_busy" });
